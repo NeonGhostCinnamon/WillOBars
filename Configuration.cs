@@ -7,7 +7,7 @@ namespace WillOBars;
 [Serializable]
 public class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
 
     /// <summary>One rule per hotbar. Starts empty: the player adds the rules they want.</summary>
     public List<HotbarRule> Rules { get; set; } = new();
@@ -18,10 +18,26 @@ public class Configuration : IPluginConfiguration
     /// </summary>
     public bool Normalize()
     {
+        var changed = false;
+
+        // Version 1 always stored "Own actions per class/job" as ticked or unticked, so an untouched box
+        // (false) made Will-o-Bars switch the game's "Shared" setting on. From version 2 an untouched box is
+        // stored as null: the game's own setting is left alone until the player ticks or unticks it.
+        if (Version < 2)
+        {
+            foreach (var r in Rules)
+            {
+                if (r.SeparatePerJob == false)
+                    r.SeparatePerJob = null;
+            }
+            Version = 2;
+            changed = true;
+        }
+
         var seen = new HashSet<int>();
         var before = Rules.Count;
         Rules.RemoveAll(r => r.Hotbar is < 1 or > 10 || !seen.Add(r.Hotbar));
-        return Rules.Count != before;
+        return changed || Rules.Count != before;
     }
 
     /// <summary>The "Pick classes and jobs" card is folded away.</summary>
@@ -60,8 +76,9 @@ public class HotbarRule
     /// <summary>
     /// Give this hotbar its own actions on every class/job (the game's "Shared" box unticked).
     /// Fisher actions on hotbar 4 then stay on Fisher, and come back when you switch to Fisher again.
+    /// Null: the player never changed it here, so the game's own "Shared" setting is left as it is.
     /// </summary>
-    public bool SeparatePerJob { get; set; }
+    public bool? SeparatePerJob { get; set; }
 
 
     /// <summary>Whether the hotbar should be visible on this job.</summary>

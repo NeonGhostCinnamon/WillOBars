@@ -1071,13 +1071,15 @@ public sealed class MainWindow : Window
                 ImGui.SetTooltip(paused ? "Paused (the hotbar is left visible). Click to turn it back on." : "On. Click to pause this hotbar's rule.");
         }
 
-        // Own actions per class/job
-        var separate = rule?.SeparatePerJob ?? false;
+        // Own actions per class/job: shows the game's real "Shared" setting until the player changes it here.
+        var separate = rule?.SeparatePerJob ?? plugin.IsHotbarShared(bar) == false;
         if (ImGui.Checkbox("Own actions per class/job##sep", ref separate))
         {
             if (rule == null)
             {
-                rule = new HotbarRule { Hotbar = bar, Mode = RuleMode.Show };
+                // Start from what the game shows now, so ticking this box doesn't also show or hide the hotbar.
+                var shownNow = plugin.Look.IsShownInGame(bar) != false;
+                rule = new HotbarRule { Hotbar = bar, Mode = shownNow ? RuleMode.Show : RuleMode.ShowOnly };
                 Config.Rules.Add(rule);
             }
             rule.SeparatePerJob = separate;

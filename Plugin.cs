@@ -234,8 +234,9 @@ public sealed class Plugin : IDalamudPlugin
         var wanted = new Dictionary<int, bool>();
         foreach (var rule in config.Rules.Where(r => r.Enabled && r.Hotbar is >= 1 and <= 10))
         {
-            if (wanted.TryAdd(rule.Hotbar, rule.VisibleOn(job)))
-                EnsureSharing(rule.Hotbar, !rule.SeparatePerJob, rule.VisibleOn(job));
+            // Only touch the game's "Shared" setting when the player chose it here.
+            if (wanted.TryAdd(rule.Hotbar, rule.VisibleOn(job)) && rule.SeparatePerJob is { } separate)
+                EnsureSharing(rule.Hotbar, !separate, rule.VisibleOn(job));
         }
 
         // Bars that are no longer controlled (rule removed or paused) are shown again.
@@ -250,6 +251,17 @@ public sealed class Plugin : IDalamudPlugin
             SetHotbarVisible(bar, visible);
             applied[bar] = visible;
         }
+    }
+
+    /// <summary>The game's own "Shared" setting for a hotbar right now (null when the hotbars aren't loaded).</summary>
+    public unsafe bool? IsHotbarShared(int hotbar)
+    {
+        if (hotbar is < 1 or > 10)
+            return null;
+        var module = RaptureHotbarModule.Instance();
+        if (module == null || !module->ModuleReady)
+            return null;
+        return module->IsHotbarShared((uint)(hotbar - 1));
     }
 
     private static readonly UiConfigOption[] ShareOptions =

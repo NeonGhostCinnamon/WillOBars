@@ -25,7 +25,7 @@ public static class SettingsTransfer
 
     public sealed class Data
     {
-        public int Version { get; set; } = 1;
+        public int Version { get; set; } = 2;
         public DateTime Exported { get; set; }
         public List<HotbarRule> Rules { get; set; } = new();
         public ThemeMode ThemeChoice { get; set; } = ThemeMode.Dark;
@@ -99,6 +99,17 @@ public static class SettingsTransfer
             // Keep only sensible rules: hotbars 1-10, one rule each.
             var seen = new HashSet<int>();
             data.Rules = data.Rules.Where(r => r.Hotbar is >= 1 and <= 10 && seen.Add(r.Hotbar)).ToList();
+
+            // Settings from version 1 saved an untouched "Own actions per class/job" box as false.
+            if (data.Version < 2)
+            {
+                foreach (var r in data.Rules)
+                {
+                    if (r.SeparatePerJob == false)
+                        r.SeparatePerJob = null;
+                }
+                data.Version = 2;
+            }
             return data;
         }
         catch (Exception)
