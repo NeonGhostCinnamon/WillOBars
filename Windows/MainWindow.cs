@@ -165,7 +165,6 @@ public sealed class MainWindow : Window
         }
 
         DrawHeader();
-        Theme.CenteredText("The right hotbars for every job.", Theme.TextSoft);
         Theme.AccentBar();
         ImGuiHelpers.ScaledDummy(4f);
 
