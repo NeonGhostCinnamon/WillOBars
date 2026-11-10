@@ -1,0 +1,15 @@
+{
+  "Author": "NeonGhostCinnamon",
+  "Name": "Will-o-Bars",
+  "Punchline": "Show or hide hotbars depending on your class or job.",
+  "Description": "Show or hide hotbars depending on your class or job. Pick a hotbar, choose \"Show only on\" or \"Hide on\", and click the jobs it applies to. More hotbar magic is in the works!\n\nOpen the settings with /willobars.",
+  "Tags": [
+    "hotbar",
+    "job",
+    "ui",
+    "utility"
+  ],
+  "RepoUrl": "https://github.com/NeonGhostCinnamon/WillOBars",
+  "IconUrl": "https://raw.githubusercontent.com/NeonGhostCinnamon/WillOBars/HEAD/images/icon.png",
+  "ApplicableVersion": "any"
+}

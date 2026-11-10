@@ -1,0 +1,16 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <Version>1.0.0.0</Version>
+    <Description>Show or hide hotbars depending on your class or job. Pick a hotbar, choose &quot;Show only on&quot; or &quot;Hide on&quot;, and click the jobs it applies to. More hotbar magic is in the works!&#10;&#10;Open the settings with /willobars.</Description>
+    <PackageProjectUrl>https://github.com/NeonGhostCinnamon/WillOBars</PackageProjectUrl>
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="images\icon.png" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <!-- Nunito Black (SIL Open Font License), the font used on will-o-cinnamon.com -->
+    <Content Include="Nunito-Black.ttf" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <Content Include="Nunito-OFL.txt" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+</Project>
