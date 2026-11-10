@@ -49,6 +49,9 @@ public sealed class Backups
 {
     private const int MaxAutomatic = 15;
 
+    /// <summary>Name of the backup made the first time Will-o-Bars runs on a character. Never pruned.</summary>
+    public const string FirstBackupName = "Before Will-o-Bars";
+
     private static readonly UiConfigOption[] ShareOptions =
     {
         UiConfigOption.HotbarCommon01, UiConfigOption.HotbarCommon02, UiConfigOption.HotbarCommon03,
@@ -203,7 +206,12 @@ public sealed class Backups
             }
         }
 
-        var file = Path.Combine(folder, $"{backup.Created:yyyyMMdd-HHmmss}{(automatic ? "-auto" : string.Empty)}.json");
+        // Two backups in the same second (e.g. the first backup and a "Shared" change right after it)
+        // must not overwrite each other.
+        var baseName = $"{backup.Created:yyyyMMdd-HHmmss}{(automatic ? "-auto" : string.Empty)}";
+        var file = Path.Combine(folder, baseName + ".json");
+        for (var n = 2; File.Exists(file); n++)
+            file = Path.Combine(folder, $"{baseName}-{n}.json");
         File.WriteAllText(file, JsonSerializer.Serialize(backup, Json));
         log.Information($"Saved hotbar backup {file} ({backup.ActionCount} actions).");
 
@@ -299,7 +307,8 @@ public sealed class Backups
 
     private void PruneAutomatic()
     {
-        foreach (var old in List.Where(x => x.Backup.Automatic).Skip(MaxAutomatic).ToList())
+        // Keep each character's very first backup (the hotbars from before Will-o-Bars) however many come after it.
+        foreach (var old in List.Where(x => x.Backup.Automatic && x.Backup.Name != FirstBackupName).Skip(MaxAutomatic).ToList())
             Delete(old.Path);
     }
 }

@@ -145,7 +145,7 @@ public sealed class Plugin : IDalamudPlugin
 
         // First time on this character: keep a copy of the hotbars exactly as they were before Will-o-Bars.
         if (Backups.Ready && !Backups.HasAutomaticFor(Backups.CurrentContentId))
-            Backups.Save("Before Will-o-Bars", local.Name.TextValue, automatic: true);
+            Backups.Save(Backups.FirstBackupName, local.Name.TextValue, automatic: true);
 
         // Safety net in case a job change event was missed.
         var job = local.ClassJob.RowId;
