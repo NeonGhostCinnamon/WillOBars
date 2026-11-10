@@ -217,7 +217,7 @@ public sealed class MainWindow : Window
         if (Theme.ThemeButton("##theme", ref mode, d))
         {
             Config.ThemeChoice = mode;
-            plugin.Save();
+            plugin.SaveOnly();
         }
 
         ImGui.SetCursorPos(new Vector2(right - d, y));
