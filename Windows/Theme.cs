@@ -648,6 +648,7 @@ internal static class Theme
     // Cards can contain other cards. Only the outermost one splits the draw list, into 3 layers:
     // 0 = outer card background, 1 = backgrounds of cards inside it, 2 = everything else.
     private static int cardDepth;
+    private static nint cardDrawList; // the window draw list the outermost open card split
 
     /// <summary>Soft pink → purple colour that slowly cycles, for things Will-o-Bars is actively doing.</summary>
     public static Vector4 Glow(float offset = 0f)
@@ -661,19 +662,26 @@ internal static class Theme
     /// <summary>Height the last card needed for its content (before any minimum height).</summary>
     public static float LastCardHeight { get; private set; }
 
-    public static void Card(string id, Action body, float width = 0, bool glow = false, float minHeight = 0)
+    public static unsafe void Card(string id, Action body, float width = 0, bool glow = false, float minHeight = 0)
     {
         var dl = ImGui.GetWindowDrawList();
         var pad = new Vector2(S(12), S(9));
         var start = ImGui.GetCursorScreenPos();
-        if (width <= 0)
-            width = cardDepth > 0 ? CardInnerRight - start.X : ImGui.GetContentRegionAvail().X;
 
-        var outer = cardDepth == 0;
+        // A card in another window (a popup opened from inside a card) starts its own layers there: the outer
+        // card's layers belong to the other window's drawing.
+        var here = (nint)dl.Handle;
+        var outer = cardDepth == 0 || here != cardDrawList;
+        var otherWindow = cardDepth > 0 && outer;
+        var (prevDepth, prevList) = (cardDepth, cardDrawList);
+        if (width <= 0)
+            width = outer ? ImGui.GetContentRegionAvail().X : CardInnerRight - start.X;
         if (outer)
         {
             dl.ChannelsSplit(3);
             dl.ChannelsSetCurrent(2);
+            cardDepth = 0;
+            cardDrawList = here;
         }
 
         var (prevLeft, prevRight) = (CardInnerLeft, CardInnerRight);
@@ -698,6 +706,8 @@ internal static class Theme
             ImGui.PopID();
             cardDepth--;
         }
+        if (outer)
+            (cardDepth, cardDrawList) = (prevDepth, prevList);
 
         var end = new Vector2(start.X + width, ImGui.GetItemRectMax().Y + pad.Y);
         LastCardHeight = end.Y - start.Y;
@@ -723,7 +733,7 @@ internal static class Theme
         else
             dl.ChannelsSetCurrent(2);
 
-        if (!outer)
+        if (!outer || otherWindow)
             (CardInnerLeft, CardInnerRight) = (prevLeft, prevRight);
 
         ImGui.SetCursorScreenPos(new Vector2(start.X, end.Y));
