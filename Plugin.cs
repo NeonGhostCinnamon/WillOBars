@@ -186,6 +186,19 @@ public sealed class Plugin : IDalamudPlugin
 
         State = ReadState(local);
 
+        // Talking to someone, in a cutscene, at a summoning bell...: the game refuses text commands then
+        // ("The command is unavailable at this time"), so wait and catch up once it takes them again.
+        if (CommandsBlocked)
+            return;
+
+        // Crafting is over: now let the game's own setting catch up with the hotbars changed while crafting.
+        if (commandAfterCrafting.Count > 0 && !Crafting)
+        {
+            foreach (var bar in commandAfterCrafting)
+                SendHotbarCommand(bar, applied.TryGetValue(bar, out var v) ? v : true);
+            commandAfterCrafting.Clear();
+        }
+
         if (dirty && (now - dirtySince).TotalMilliseconds >= 300)
         {
             Apply(job, force: true);
@@ -197,6 +210,18 @@ public sealed class Plugin : IDalamudPlugin
         Apply(job, force: false);
         Enforce(now);
     }
+
+    /// <summary>Whether the game won't take a "/hotbar display" command right now.</summary>
+    private bool CommandsBlocked
+        => ClientState.IsGPosing
+           || Condition[ConditionFlag.Occupied]
+           || Condition[ConditionFlag.OccupiedInEvent]
+           || Condition[ConditionFlag.OccupiedInQuestEvent]
+           || Condition[ConditionFlag.OccupiedInCutSceneEvent]
+           || Condition[ConditionFlag.OccupiedSummoningBell]
+           || Condition[ConditionFlag.WatchingCutscene]
+           || Condition[ConditionFlag.WatchingCutscene78]
+           || Condition[ConditionFlag.CreatingCharacter];
 
     // Per hotbar: when we last tried to fix it, and how many times in a row.
     private readonly Dictionary<int, (DateTime Last, int Tries)> fixes = new();
@@ -435,8 +460,39 @@ public sealed class Plugin : IDalamudPlugin
         Log.Debug($"Hotbar {hotbar} is now {(shared ? "shared" : "separate per class/job")}.");
     }
 
+    /// <summary>Crafting: the game refuses text commands then, but the hotbars still have to change.</summary>
+    private bool Crafting
+        => Condition[ConditionFlag.Crafting]
+           || Condition[ConditionFlag.PreparingToCraft]
+           || Condition[ConditionFlag.ExecutingCraftingAction];
+
+    // Hotbars shown or hidden directly while crafting: the game's own setting is updated once crafting is over.
+    private readonly HashSet<int> commandAfterCrafting = new();
+
+    /// <summary>
+    /// Show or hide a hotbar. Normally the same as typing "/hotbar display 4 on" (or off) in the chat box; while
+    /// crafting (when the game won't take that command) the hotbar is shown or hidden directly, and the command
+    /// follows once crafting is over.
+    /// </summary>
+    private unsafe void SetHotbarVisible(int hotbar, bool visible)
+    {
+        if (Crafting)
+        {
+            var addonPtr = GameGui.GetAddonByName(HotbarLook.AddonName(hotbar));
+            if (!addonPtr.IsNull)
+            {
+                var addon = (FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)addonPtr.Address;
+                if (visible) addon->Show(true, 0);
+                else addon->Hide(true, false, 0);
+            }
+            commandAfterCrafting.Add(hotbar);
+            return;
+        }
+        SendHotbarCommand(hotbar, visible);
+    }
+
     /// <summary>Same as typing "/hotbar display 4 on" (or off) in the chat box.</summary>
-    private static unsafe void SetHotbarVisible(int hotbar, bool visible)
+    private static unsafe void SendHotbarCommand(int hotbar, bool visible)
     {
         var uiModule = UIModule.Instance();
         if (uiModule == null)
