@@ -44,7 +44,7 @@ public sealed class MainWindow : Window
     private const float StartWidth = 540;
 
     public MainWindow(Plugin plugin)
-        : base("Will-o-Bars##WillOBarsMain", ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoMove)
+        : base($"Will-o-Bars##{Plugin.Id}Main", ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoMove)
     {
         this.plugin = plugin;
         Size = new Vector2(StartWidth, 600);
@@ -176,6 +176,10 @@ public sealed class MainWindow : Window
         fileDialog.Draw();
     }
 
+    /// <summary>Where the window was last frame (the rule editor opens beside it).</summary>
+    public Vector2 LastPos { get; private set; }
+    public Vector2 LastSize { get; private set; }
+
     // Height of everything in the window last frame, and the width the window had.
     private float fitHeight;
     private float fitWidth;
@@ -186,6 +190,8 @@ public sealed class MainWindow : Window
         var style = ImGui.GetStyle();
         fitHeight = ImGui.GetCursorPosY() - style.ItemSpacing.Y + style.WindowPadding.Y;
         fitWidth = ImGui.GetWindowSize().X;
+        LastPos = ImGui.GetWindowPos();
+        LastSize = ImGui.GetWindowSize();
     }
 
     // ---------------------------------------------------------------- header
@@ -200,6 +206,17 @@ public sealed class MainWindow : Window
         var topScreen = ImGui.GetCursorScreenPos();
         Theme.Heading(plugin.TitleFont, buttonsW + S(8), ("Will-", false), ("o", true), ("-Bars", false));
         var headingH = ImGui.GetItemRectSize().Y;
+        if (Plugin.IsTestBuild)
+        {
+            // Test build: a small "TEST" tag after the title.
+            var max = ImGui.GetItemRectMax();
+            var tag = "TEST";
+            var ts = ImGui.CalcTextSize(tag);
+            var pos = new Vector2(max.X + S(6), max.Y - ts.Y - S(6));
+            var dlh = ImGui.GetWindowDrawList();
+            dlh.AddRectFilled(pos - new Vector2(S(5), S(1)), pos + ts + new Vector2(S(5), S(1)), ImGui.GetColorU32(Theme.Amber), S(6));
+            dlh.AddText(pos, ImGui.GetColorU32(Theme.TextOn(Theme.Amber)), tag);
+        }
         var after = ImGui.GetCursorPos();
 
         var y = top.Y + Math.Max(0, (headingH - d) / 2f);
@@ -311,239 +328,115 @@ public sealed class MainWindow : Window
 
     // ---------------------------------------------------------------- status card
 
-    private float jobCardH;
-    private float barsCardH;
-
+    /// <summary>
+    /// One short card: the job you're on, the hotbars Will-o-Bars controls (shown/hidden right now), and a line
+    /// with where you are, the weather and whether you're in combat.
+    /// </summary>
     private void DrawStatusCard()
     {
         var job = Jobs.Get(plugin.CurrentJob);
-        if (job == null)
+        Theme.Card("status", () =>
         {
-            Theme.Card("status", () =>
+            if (job == null)
             {
                 ImGui.TextColored(Theme.Muted, "Current class / job");
                 Theme.Wrapped("Log in to a character to see your hotbars change.", Theme.TextSoft);
-            });
-            return;
-        }
+                return;
+            }
 
-        var iconSize = S(44);
-        var avail = ImGui.GetContentRegionAvail().X;
-        var gap = S(10);
+            var left = Theme.CardInnerLeft;
+            var right = Theme.CardInnerRight;
+            var iconSize = S(36);
+            var rowTop = ImGui.GetCursorScreenPos();
 
-        // Left card: just wide enough for the icon and name.
-        float nameW;
-        using (plugin.TitleFont.Available ? plugin.TitleFont.Push() : null)
-            nameW = ImGui.CalcTextSize(job.Name).X;
-        var leftW = Math.Min(avail * 0.5f, Math.Max(S(170), iconSize + S(10) + nameW + S(24) + S(8)));
-        var rightW = avail - leftW - gap;
-        var sideBySide = rightW >= S(200);
-        if (!sideBySide)
-            leftW = avail;
-
-        var start = ImGui.GetCursorScreenPos();
-        // Side by side, both cards get the height of the taller one (measured last frame).
-        var sameH = sideBySide ? Math.Max(jobCardH, barsCardH) : 0f;
-
-        Theme.Card("job", () =>
-        {
-            ImGui.TextColored(Theme.Muted, "Current class / job");
             DrawJobIcon(job.IconId, iconSize, 1f);
-            ImGui.SameLine(0, S(10));
-            var y = ImGui.GetCursorPosY();
+            ImGui.SameLine(0, S(8));
             using (plugin.TitleFont.Available ? plugin.TitleFont.Push() : null)
             {
-                ImGui.SetCursorPosY(y + Math.Max(0, (iconSize - ImGui.GetTextLineHeight()) / 2f));
+                var h = ImGui.GetTextLineHeight() * 0.8f;
+                ImGui.SetCursorScreenPos(new Vector2(ImGui.GetCursorScreenPos().X, rowTop.Y + (iconSize - ImGui.GetTextLineHeight()) / 2f));
                 ImGui.TextColored(Theme.Text, job.Name);
             }
-        }, leftW, minHeight: sameH);
-        jobCardH = Theme.LastCardHeight;
-        var leftBottom = ImGui.GetCursorScreenPos().Y;
+            var nameRight = ImGui.GetItemRectMax().X;
 
-        if (sideBySide)
-            ImGui.SetCursorScreenPos(new Vector2(start.X + leftW + gap, start.Y));
-
-        // Right card: the hotbar badges (display only) and what the icons mean.
-        Theme.Card("bars", () =>
-        {
-            Theme.BrandText("Hotbars on this job changed by Will-o-Bars:", Theme.Muted, Theme.CardInnerRight);
-
-            // Only hotbars whose rule is switched on (a paused rule doesn't do anything).
+            // Pills for the controlled hotbars, right-aligned: "4 (eye)" shown, "6 (crossed eye)" hidden.
             var bars = Config.Rules.Where(r => r.Enabled).Select(r => r.Hotbar).Distinct().OrderBy(b => b).ToList();
-            if (bars.Count == 0)
+            if (bars.Count > 0)
             {
-                Theme.Wrapped("No hotbars controlled right now.", Theme.TextSoft);
-            }
-            else
-            {
-                var w = S(48);
-                var bgap = S(6);
-                var first = true;
-                foreach (var bar in bars)
+                var gap = S(5);
+                var widths = bars.Select(b => BarPillWidth(b)).ToList();
+                var total = widths.Sum() + gap * (bars.Count - 1);
+                var x = Math.Max(nameRight + S(10), right - total);
+                var pillH = ImGui.GetTextLineHeight() + S(2);
+                var y = rowTop.Y + (iconSize - pillH) / 2f;
+                for (var i = 0; i < bars.Count; i++)
                 {
-                    if (!first)
-                    {
-                        if (ImGui.GetItemRectMax().X + bgap + w <= Theme.CardInnerRight)
-                            ImGui.SameLine(0, bgap);
-                    }
-                    first = false;
-
-                    var state = JobState(bar, job.Id);
-                    var paused = Config.Rules.First(r => r.Hotbar == bar) is { Enabled: false };
-                    BarBadge(bar, state, w, paused);
+                    if (x + widths[i] > right + 0.5f)
+                        break;
+                    ImGui.SetCursorScreenPos(new Vector2(x, y));
+                    var bar = bars[i];
+                    var shown = plugin.Applied.TryGetValue(bar, out var v) ? v : plugin.Look.IsShownInGame(bar) != false;
+                    BarPill(bar, shown);
                     if (ImGui.IsItemHovered())
-                    {
-                        var now = paused ? "Rule paused: left visible." : state switch
-                        {
-                            BarJobState.Hidden => $"Hidden on {job.Name}.",
-                            BarJobState.Only => $"Shown only on {job.Name}" + (OnlyCount(bar) > 1 ? $" (and {OnlyCount(bar) - 1} more)." : "."),
-                            _ => $"Shown on {job.Name}.",
-                        };
-                        ImGui.SetTooltip($"Hotbar {bar}\n{now}");
-                    }
+                        ImGui.SetTooltip($"Hotbar {bar}: {(shown ? "shown" : "hidden")}\n{WhyText(bar)}");
+                    x += widths[i] + gap;
                 }
             }
 
-            ImGuiHelpers.ScaledDummy(2f);
-            DrawLegend();
-        }, sideBySide ? rightW : 0, minHeight: sameH);
-        barsCardH = Theme.LastCardHeight;
-
-        if (sideBySide)
-        {
-            var bottom = Math.Max(leftBottom, ImGui.GetCursorScreenPos().Y);
-            ImGui.SetCursorScreenPos(new Vector2(start.X, bottom));
-            ImGui.Dummy(Vector2.Zero);
-        }
+            ImGui.SetCursorScreenPos(new Vector2(left, rowTop.Y + iconSize + S(4)));
+            var st = plugin.State;
+            var where = GameData.PlaceNameText(st.PlaceName);
+            var parts = new System.Collections.Generic.List<string>();
+            if (st.PlaceName != 0) parts.Add(where);
+            if (st.Weather != 0) parts.Add(GameData.WeatherName(st.Weather));
+            parts.Add(st.InCombat ? "in combat" : "not in combat");
+            Theme.Wrapped(string.Join(" · ", parts), Theme.Muted);
+        });
     }
 
-    private enum BarJobState
-    {
-        Shown,
-        Hidden,
-        Only,
-    }
-
-    private BarJobState JobState(int bar, uint job)
+    /// <summary>Which case is deciding a hotbar right now, in words.</summary>
+    private string WhyText(int bar)
     {
         var rule = Config.Rules.FirstOrDefault(r => r.Hotbar == bar);
-        var hiddenInGame = job == plugin.CurrentJob && plugin.Look.IsShownInGame(bar) == false;
-        if (rule is not { Enabled: true })
-            return hiddenInGame ? BarJobState.Hidden : BarJobState.Shown;
-        if (hiddenInGame)
-            return BarJobState.Hidden;
-        if (rule.Mode == RuleMode.ShowOnly && rule.Jobs.Contains(job))
-            return BarJobState.Only;
-        return rule.VisibleOn(job) ? BarJobState.Shown : BarJobState.Hidden;
+        if (rule == null || !plugin.DecidingCase.TryGetValue(bar, out var which))
+            return "Game setting.";
+        var cases = rule.Cases ?? new System.Collections.Generic.List<RuleCase>();
+        if (which < 0 || which >= cases.Count)
+            return "No case matches, so: otherwise " + (rule.OtherwiseShow ? "show." : "hide.");
+        var count = cases.Count(c => c.Conditions.Count > 0);
+        return (count > 1 ? $"Case {which + 1}: " : "") + RuleLogic.Describe(cases[which]) + ".";
     }
 
-    private int OnlyCount(int bar) => Config.Rules.FirstOrDefault(r => r.Hotbar == bar)?.Jobs.Count ?? 0;
-
-    private void CycleJobState(int bar, uint job, BarJobState state)
+    private static float BarPillWidth(int bar)
     {
-        var rule = Config.Rules.FirstOrDefault(r => r.Hotbar == bar);
-        if (rule == null)
-        {
-            rule = new HotbarRule { Hotbar = bar, Mode = RuleMode.Show };
-            Config.Rules.Add(rule);
-        }
-        rule.Enabled = true;
-
-        switch (state)
-        {
-            case BarJobState.Shown:
-                // Hide on this job.
-                if (rule.Mode == RuleMode.ShowOnly)
-                {
-                    rule.Jobs.Remove(job);
-                }
-                else
-                {
-                    if (rule.Mode == RuleMode.Show)
-                        rule.Jobs.Clear();
-                    rule.Mode = RuleMode.HideOn;
-                    rule.Jobs.Add(job);
-                }
-                break;
-
-            case BarJobState.Hidden:
-                // Show only on this job.
-                if (rule.Mode != RuleMode.ShowOnly)
-                    rule.Jobs.Clear();
-                rule.Mode = RuleMode.ShowOnly;
-                rule.Jobs.Add(job);
-                break;
-
-            default:
-                // Back to shown everywhere.
-                rule.Mode = RuleMode.Show;
-                rule.Jobs.Clear();
-                break;
-        }
-        plugin.Save();
+        float iconW;
+        using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
+            iconW = ImGui.CalcTextSize(FontAwesomeIcon.EyeSlash.ToIconString()).X;
+        return ImGui.CalcTextSize(bar.ToString()).X + S(4) + iconW + S(14);
     }
 
-    /// <summary>Hotbar badge (display only): number plus an eye (shown), crossed eye (hidden) or pin (only on this job).</summary>
-    private static void BarBadge(int bar, BarJobState state, float width, bool paused)
+    /// <summary>Small pill: hotbar number and an eye (shown, pink) or crossed eye (hidden, grey).</summary>
+    private static void BarPill(int bar, bool shown)
     {
-        var h = ImGui.GetFrameHeight();
+        var width = BarPillWidth(bar);
+        var h = ImGui.GetTextLineHeight() + S(2);
         var pos = ImGui.GetCursorScreenPos();
         ImGui.Dummy(new Vector2(width, h));
         var dl = ImGui.GetWindowDrawList();
-        var round = Theme.UseDalamud ? Theme.R(0) : h / 2f;
-
-        var on = state != BarJobState.Hidden && !paused;
-        var fill = on ? Theme.Pink : Theme.Glass;
-        dl.AddRectFilled(pos, pos + new Vector2(width, h), ImGui.GetColorU32(fill), round);
-        dl.AddRect(pos, pos + new Vector2(width, h), ImGui.GetColorU32(on ? Theme.Outline : Theme.Border), round, ImDrawFlags.None, S(1.2f));
-
-        var textCol = ImGui.GetColorU32(on ? Theme.OnPink : Theme.Muted);
-        var label = bar.ToString();
-        var icon = paused ? FontAwesomeIcon.Pause : state switch
-        {
-            BarJobState.Hidden => FontAwesomeIcon.EyeSlash,
-            BarJobState.Only => FontAwesomeIcon.Thumbtack,
-            _ => FontAwesomeIcon.Eye,
-        };
-
-        var iconStr = icon.ToIconString();
-        Vector4 ink;
+        var fill = shown ? Theme.Pink : Grey;
+        dl.AddRectFilled(pos, pos + new Vector2(width, h), ImGui.GetColorU32(fill), Theme.R(8));
+        dl.AddRect(pos, pos + new Vector2(width, h), ImGui.GetColorU32(Theme.Outline), Theme.R(8));
+        var col = ImGui.GetColorU32(Theme.TextOn(fill));
+        var num = bar.ToString();
+        var ink = Theme.InkBounds(num);
+        dl.AddText(new Vector2(pos.X + S(7), pos.Y + h / 2f - (ink.Y + ink.W) / 2f), col, num);
+        var x = pos.X + S(7) + ImGui.CalcTextSize(num).X + S(4);
         using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
-            ink = Theme.InkBounds(iconStr);
-        var iconW = ink.Z - ink.X;
-        var labelW = ImGui.CalcTextSize(label).X;
-        var gap = S(6);
-        var sx = pos.X + (width - labelW - gap - iconW) / 2f;
-        var cy = pos.Y + h / 2f;
-        var lInk = Theme.InkBounds(label);
-        dl.AddText(new Vector2(sx, cy - (lInk.Y + lInk.W) / 2f), textCol, label);
-        using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
-            dl.AddText(new Vector2(sx + labelW + gap - ink.X, cy - (ink.Y + ink.W) / 2f), textCol, iconStr);
-    }
-
-    private static void DrawLegend()
-    {
-        void Item(FontAwesomeIcon icon, string text)
         {
-            using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
-                ImGui.TextColored(Theme.Muted, icon.ToIconString());
-            ImGui.SameLine(0, S(5));
-            ImGui.TextColored(Theme.Muted, text);
+            var icon = (shown ? FontAwesomeIcon.Eye : FontAwesomeIcon.EyeSlash).ToIconString();
+            var iInk = Theme.InkBounds(icon);
+            dl.AddText(new Vector2(x - iInk.X, pos.Y + h / 2f - (iInk.Y + iInk.W) / 2f), col, icon);
         }
-
-        void Next(string text)
-        {
-            // Stay on this line only when the next item fits inside the card.
-            var need = S(14) + ImGui.GetTextLineHeight() + S(5) + ImGui.CalcTextSize(text).X;
-            if (ImGui.GetItemRectMax().X + need <= Theme.CardInnerRight)
-                ImGui.SameLine(0, S(14));
-        }
-
-        Item(FontAwesomeIcon.Eye, "shown");
-        Next("hidden on this job");
-        Item(FontAwesomeIcon.EyeSlash, "hidden on this job");
-        Next("only on this job");
-        Item(FontAwesomeIcon.Thumbtack, "only on this job");
     }
 
     // ---------------------------------------------------------------- tabs
@@ -584,574 +477,198 @@ public sealed class MainWindow : Window
 
     // ---------------------------------------------------------------- "Hotbars" tab
 
+    internal static readonly Vector4 Grey = new(0.55f, 0.55f, 0.62f, 1f);
 
-    private static readonly Vector4 Grey = new(0.55f, 0.55f, 0.62f, 1f);
-
-    /// <summary>
-    /// One place for everything: pick classes/jobs at the top, then every hotbar below shows what it does on
-    /// them, with a switch to show/hide it there. Unfold a hotbar for its settings.
-    /// </summary>
-    private readonly System.Collections.Generic.HashSet<uint> selectedJobs = new();
-    private uint lastJob;
-
+    /// <summary>Every hotbar as a short card: what its rule does, an Edit button and whether it's shown now.</summary>
     private void DrawHotbars()
     {
-        // The picked class/job follows the one you're playing: when you change job, the pick resets to it.
-        if (plugin.CurrentJob != 0 && plugin.CurrentJob != lastJob)
+        var avail = ImGui.GetContentRegionAvail().X;
+        var gap = S(8);
+        if (avail < S(460))
         {
-            selectedJobs.Clear();
-            selectedJobs.Add(plugin.CurrentJob);
-            lastJob = plugin.CurrentJob;
+            for (var bar = 1; bar <= 10; bar++)
+            {
+                var b = bar;
+                Theme.Card($"bar{b}", () => DrawHotbarCard(b), 0, plugin.RulesWindow.EditingBar == b);
+            }
         }
-
-        // Step 1: which classes/jobs to check
-        Theme.Card("pick", () =>
+        else
         {
-            // Header row: click it (or the arrow) to fold the card away.
-            var left = Theme.CardInnerLeft;
-            var right = Theme.CardInnerRight;
-            var rowStart = ImGui.GetCursorScreenPos();
-            var headH = ImGui.GetTextLineHeight() + S(4);
-            StepTitle("1", "Pick classes and jobs");
+            var colW = (avail - gap) / 2f;
+            var start = ImGui.GetCursorScreenPos();
 
-            var folded = Config.PickFolded;
-            var dl = ImGui.GetWindowDrawList();
-            var chevW = S(14);
-            using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
+            ImGui.BeginGroup();
+            for (var bar = 1; bar <= 5; bar++)
             {
-                var chev = (folded ? FontAwesomeIcon.ChevronRight : FontAwesomeIcon.ChevronDown).ToIconString();
-                var ink = Theme.InkBounds(chev);
-                var hoverHead = ImGui.IsMouseHoveringRect(rowStart, new Vector2(right, rowStart.Y + headH));
-                dl.AddText(new Vector2(right - chevW + (chevW - (ink.Z - ink.X)) / 2f - ink.X, rowStart.Y + headH / 2f - (ink.Y + ink.W) / 2f),
-                    ImGui.GetColorU32(hoverHead ? Theme.AccentText : Theme.Muted), chev);
+                var b = bar;
+                Theme.Card($"bar{b}", () => DrawHotbarCard(b), colW, plugin.RulesWindow.EditingBar == b);
             }
+            ImGui.EndGroup();
+            var leftBottom = ImGui.GetItemRectMax().Y;
 
-            // Folded: show what's picked as small icons next to the title.
-            if (folded)
+            ImGui.SetCursorScreenPos(new Vector2(start.X + colW + gap, start.Y));
+            ImGui.BeginGroup();
+            for (var bar = 6; bar <= 10; bar++)
             {
-                var picked = Jobs.All.Where(j => selectedJobs.Contains(j.Id)).ToList();
-                var icon = S(18);
-                var x = ImGui.GetItemRectMax().X + S(10);
-                var maxX = right - chevW - S(6);
-                var iy = rowStart.Y + (headH - icon) / 2f;
-                for (var i = 0; i < picked.Count; i++)
-                {
-                    if (x + icon + (i < picked.Count - 1 ? ImGui.CalcTextSize("+99").X : 0) > maxX)
-                    {
-                        dl.AddText(new Vector2(x, rowStart.Y + (headH - ImGui.GetTextLineHeight()) / 2f), ImGui.GetColorU32(Theme.Muted), $"+{picked.Count - i}");
-                        break;
-                    }
-                    var tex = Plugin.TextureProvider.GetFromGameIcon(new GameIconLookup(picked[i].IconId)).GetWrapOrEmpty();
-                    dl.AddImage(tex.Handle, new Vector2(x, iy), new Vector2(x + icon, iy + icon));
-                    x += icon + S(3);
-                }
-                if (picked.Count == 0)
-                    dl.AddText(new Vector2(x, rowStart.Y + (headH - ImGui.GetTextLineHeight()) / 2f), ImGui.GetColorU32(Theme.Muted), "nothing picked");
+                var b = bar;
+                Theme.Card($"bar{b}", () => DrawHotbarCard(b), colW, plugin.RulesWindow.EditingBar == b);
             }
+            ImGui.EndGroup();
+            var rightBottom = ImGui.GetItemRectMax().Y;
 
-            var after = ImGui.GetCursorScreenPos();
-            ImGui.SetCursorScreenPos(rowStart);
-            if (ImGui.InvisibleButton("##foldpick", new Vector2(right - left, headH)))
-            {
-                Config.PickFolded = !folded;
-                plugin.SaveOnly();
-            }
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
-            }
-            ImGui.SetCursorScreenPos(after);
+            ImGui.SetCursorScreenPos(new Vector2(start.X, Math.Max(leftBottom, rightBottom)));
             ImGui.Dummy(Vector2.Zero);
-
-            if (folded)
-                return;
-
-            Theme.Wrapped("Pick classes/jobs to see on each hotbar below whether it's shown or hidden on them. Click to pick, Shift+click for a range, click and drag for many, or click a role name for the whole group.", Theme.Muted);
-
-            if (TextLink("Current job") && plugin.CurrentJob != 0)
-            {
-                selectedJobs.Clear();
-                selectedJobs.Add(plugin.CurrentJob);
-            }
-            ImGui.SameLine(0, S(14));
-            if (TextLink("All"))
-            {
-                foreach (var j in Jobs.All)
-                    selectedJobs.Add(j.Id);
-            }
-            ImGui.SameLine(0, S(14));
-            if (TextLink("None"))
-                selectedJobs.Clear();
-
-            ImGuiHelpers.ScaledDummy(2f);
-            DrawJobGrid("pick", selectedJobs.Contains, (ids, on) =>
-            {
-                foreach (var id in ids)
-                {
-                    if (on) selectedJobs.Add(id);
-                    else selectedJobs.Remove(id);
-                }
-            });
-        });
-
-        // Step 2: the hotbars, in two columns (1-5 left, 6-10 right)
-        var sel = Jobs.All.Where(j => selectedJobs.Contains(j.Id)).Select(j => j.Id).ToList();
-
-        Theme.Card("hotbars", () =>
-        {
-            var left = Theme.CardInnerLeft;
-            var right = Theme.CardInnerRight;
-            var rowStart = ImGui.GetCursorScreenPos();
-            var headH = ImGui.GetTextLineHeight() + S(4);
-            var folded = Config.HotbarsFolded;
-            var dl = ImGui.GetWindowDrawList();
-            var chevW = S(14);
-
-            StepTitle("2", "Hotbars");
-            var titleRight = ImGui.GetItemRectMax().X;
-
-            // Arrow on the right
-            using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
-            {
-                var chev = (folded ? FontAwesomeIcon.ChevronRight : FontAwesomeIcon.ChevronDown).ToIconString();
-                var ink = Theme.InkBounds(chev);
-                var hoverHead = ImGui.IsMouseHoveringRect(rowStart, new Vector2(right, rowStart.Y + headH));
-                dl.AddText(new Vector2(right - chevW + (chevW - (ink.Z - ink.X)) / 2f - ink.X, rowStart.Y + headH / 2f - (ink.Y + ink.W) / 2f),
-                    ImGui.GetColorU32(hoverHead ? Theme.AccentText : Theme.Muted), chev);
-            }
-
-            // Folded: the hotbars Will-o-Bars controls, as a short list next to the title.
-            if (folded)
-            {
-                var controlled = Config.Rules.Where(r => r.Enabled).Select(r => r.Hotbar).OrderBy(b => b).ToList();
-                var text = controlled.Count switch
-                {
-                    0 => "no hotbars controlled",
-                    1 => $"controlling hotbar {controlled[0]}",
-                    _ => "controlling hotbars " + string.Join(", ", controlled),
-                };
-                dl.PushClipRect(new Vector2(titleRight, rowStart.Y), new Vector2(right - chevW - S(6), rowStart.Y + headH), true);
-                dl.AddText(new Vector2(titleRight + S(10), rowStart.Y + (headH - ImGui.GetTextLineHeight()) / 2f), ImGui.GetColorU32(Theme.Muted), text);
-                dl.PopClipRect();
-            }
-
-            // "Fold all / Unfold all" just left of the arrow (only when open).
-            var linkText = Enumerable.Range(1, 10).All(b => Config.OpenBars.Contains(b)) ? "Fold all" : "Unfold all";
-            var linkW = folded ? 0f : ImGui.CalcTextSize(linkText).X + S(12);
-
-            // Clicking the title row (left of the link) folds/unfolds the whole card.
-            var after = ImGui.GetCursorScreenPos();
-            ImGui.SetCursorScreenPos(rowStart);
-            if (ImGui.InvisibleButton("##foldbars", new Vector2(Math.Max(S(40), right - left - linkW - chevW), headH)))
-            {
-                Config.HotbarsFolded = !folded;
-                plugin.SaveOnly();
-            }
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
-            }
-            // The arrow itself is clickable too.
-            ImGui.SetCursorScreenPos(new Vector2(right - chevW, rowStart.Y));
-            if (ImGui.InvisibleButton("##foldbars2", new Vector2(chevW, headH)))
-            {
-                Config.HotbarsFolded = !folded;
-                plugin.SaveOnly();
-            }
-
-            if (!folded)
-            {
-                ImGui.SetCursorScreenPos(new Vector2(right - chevW - linkW + S(4), rowStart.Y + S(2)));
-                if (TextLink(linkText))
-                {
-                    var allOpen = linkText == "Fold all";
-                    Config.OpenBars.Clear();
-                    if (!allOpen)
-                        for (var b = 1; b <= 10; b++)
-                            Config.OpenBars.Add(b);
-                    plugin.SaveOnly();
-                }
-            }
-
-            ImGui.SetCursorScreenPos(new Vector2(left, Math.Max(after.Y, rowStart.Y + headH)));
-            ImGui.Dummy(Vector2.Zero);
-            if (folded)
-                return;
-            ImGuiHelpers.ScaledDummy(2f);
-
-            var avail = Theme.CardInnerWidth;
-            var gap = S(10);
-            if (avail < S(440))
-            {
-                // Narrow window: one column.
-                for (var bar = 1; bar <= 10; bar++)
-                {
-                    var b = bar;
-                    Theme.Card($"bar{b}", () => DrawHotbarCard(b, sel), 0, IsControlled(b));
-                }
-            }
-            else
-            {
-                var colW = (avail - gap) / 2f;
-                var start = ImGui.GetCursorScreenPos();
-
-                ImGui.BeginGroup();
-                for (var bar = 1; bar <= 5; bar++)
-                {
-                    var b = bar;
-                    Theme.Card($"bar{b}", () => DrawHotbarCard(b, sel), colW, IsControlled(b));
-                }
-                ImGui.EndGroup();
-                var leftBottom = ImGui.GetItemRectMax().Y;
-
-                ImGui.SetCursorScreenPos(new Vector2(start.X + colW + gap, start.Y));
-                ImGui.BeginGroup();
-                for (var bar = 6; bar <= 10; bar++)
-                {
-                    var b = bar;
-                    Theme.Card($"bar{b}", () => DrawHotbarCard(b, sel), colW, IsControlled(b));
-                }
-                ImGui.EndGroup();
-                var rightBottom = ImGui.GetItemRectMax().Y;
-
-                ImGui.SetCursorScreenPos(new Vector2(start.X, Math.Max(leftBottom, rightBottom)));
-                ImGui.Dummy(Vector2.Zero);
-            }
-        });
+        }
         ImGuiHelpers.ScaledDummy(2f);
     }
 
-    private bool IsControlled(int bar) => Config.Rules.Any(r => r.Hotbar == bar && r.Enabled);
-
-    private void StepTitle(string number, string title)
-    {
-        var d = ImGui.GetTextLineHeight() + S(4);
-        var pos = ImGui.GetCursorScreenPos();
-        var dl = ImGui.GetWindowDrawList();
-        dl.AddCircleFilled(pos + new Vector2(d / 2f), d / 2f, ImGui.GetColorU32(Theme.Pink), 24);
-        var ts = ImGui.CalcTextSize(number);
-        dl.AddText(pos + new Vector2((d - ts.X) / 2f, (d - ts.Y) / 2f), ImGui.GetColorU32(Theme.OnPink), number);
-        ImGui.Dummy(new Vector2(d, d));
-        ImGui.SameLine(0, S(8));
-        ImGui.SetCursorScreenPos(new Vector2(ImGui.GetCursorScreenPos().X, pos.Y + (d - ImGui.GetTextLineHeight()) / 2f));
-        ImGui.TextColored(Theme.Text, title);
-    }
-
-    /// <summary>What the game itself is doing with this hotbar right now.</summary>
-    private string GameState(int bar) => plugin.Look.IsShownInGame(bar) switch
-    {
-        true => "shown",
-        false => "hidden",
-        _ => "game setting",
-    };
-
-    /// <summary>What a hotbar's rule does, in a few words.</summary>
-    private static (string Text, Vector4 Color) RuleSummary(HotbarRule? rule)
-    {
-        if (rule == null)
-            return ("", Theme.Muted);
-        if (!rule.Enabled)
-            return ("paused", Theme.Muted);
-        var n = rule.Jobs.Count;
-        var jobs = n == 1 ? Jobs.Get(rule.Jobs.First())?.Abbreviation ?? "1 job" : $"{n} jobs";
-        return rule.Mode switch
-        {
-            RuleMode.Show => ("always shown", Theme.AccentText),
-            RuleMode.ShowOnly => (n == 0 ? "hidden everywhere" : $"only on {jobs}", Theme.AccentText),
-            _ => (n == 0 ? "shown everywhere" : $"hidden on {jobs}", Theme.AccentText),
-        };
-    }
-
-    private void DrawHotbarCard(int bar, System.Collections.Generic.List<uint> sel)
+    private void DrawHotbarCard(int bar)
     {
         var rule = Config.Rules.FirstOrDefault(r => r.Hotbar == bar);
-        var open = Config.OpenBars.Contains(bar);
+        var controlled = rule is { Enabled: true };
+        var editing = plugin.RulesWindow.EditingBar == bar;
         var d = ImGui.GetFrameHeight();
         var left = Theme.CardInnerLeft;
         var right = Theme.CardInnerRight;
         var rowStart = ImGui.GetCursorScreenPos();
         var dl = ImGui.GetWindowDrawList();
 
-        // Preview for the jobs picked in step 1: a small "shown"/"hidden" pill on the right.
-        string? preview = null;
-        var previewOn = true;
-        if (rule is not { Enabled: true })
+        // Number in a circle (filled when Will-o-Bars controls this hotbar) and the title.
+        var cd = ImGui.GetTextLineHeight() + S(4);
+        var cy = rowStart.Y + d / 2f;
+        var center = new Vector2(left + cd / 2f, cy);
+        if (controlled)
         {
-            // No (active) rule: show what the game itself is doing, the same way.
-            var inGame = plugin.Look.IsShownInGame(bar);
-            if (inGame != null)
-            {
-                previewOn = inGame.Value;
-                preview = inGame.Value ? "shown" : "hidden";
-            }
+            // Will-o-Bars is using this hotbar: pink circle with the same slowly shifting pink/purple border as the glowing cards.
+            var glow = Theme.Glow();
+            dl.AddCircleFilled(center, cd / 2f, ImGui.GetColorU32(Theme.Pink), 24);
+            dl.AddCircle(center, cd / 2f + S(1.5f), ImGui.GetColorU32(glow with { W = 0.35f }), 24, S(3f));
+            dl.AddCircle(center, cd / 2f, ImGui.GetColorU32(glow), 24, S(1.8f));
         }
-        else if (sel.Count > 0)
-        {
-            // For the job you're on right now, trust what the game actually shows (it may have been hidden
-            // some other way, like the HUD Layout editor). Other jobs can only follow the rule.
-            var inGame = plugin.Look.IsShownInGame(bar);
-            var shown = sel.Count(j => j == plugin.CurrentJob && inGame != null ? inGame.Value : rule.VisibleOn(j));
-            previewOn = shown > 0;
-            preview = shown == sel.Count ? "shown" : shown == 0 ? "hidden" : $"{shown}/{sel.Count} shown";
-        }
-        // Little wisp in front of the pill when Will-o-Bars is controlling this hotbar.
-        var controlled = rule is { Enabled: true };
-        var wispStr = FontAwesomeIcon.Fire.ToIconString();
-        var wispW = 0f;
-        if (controlled && preview != null)
-        {
-            using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
-            {
-                var ink = Theme.InkBounds(wispStr);
-                wispW = ink.Z - ink.X + S(6);
-            }
-        }
-        // Controlled and hidden by the rule: shown as a crossed-through "shown" pill.
-        var struck = controlled && preview == "hidden";
-        if (struck)
-            preview = "shown";
-
-        // Hotbars the game decides on get two clickable pills instead: "shown" and "hidden".
-        var vanilla = !controlled && preview != null;
-        var pillGap = S(4);
-        var previewW = preview == null ? 0f
-            : vanilla ? Theme.PillWidth("shown") + pillGap + Theme.PillWidth("hidden")
-            : Theme.PillWidth(preview) + wispW;
-
-        // Header row: click on it (left of the pills) to fold/unfold.
-        if (ImGui.InvisibleButton("##head", new Vector2(Math.Max(S(40), right - left - previewW - S(8)), d)))
-        {
-            if (open) Config.OpenBars.Remove(bar);
-            else Config.OpenBars.Add(bar);
-            plugin.SaveOnly();
-        }
-        var headHovered = ImGui.IsItemHovered();
-        if (headHovered)
-        {
-            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
-            if (preview != null)
-                ImGui.SetTooltip(rule is { Enabled: true }
-                    ? $"Hotbar {bar} is {(struck ? "hidden by Will-o-Bars" : preview)} on {WhoText(sel)}."
-                    : $"Hotbar {bar} is {preview} (vanilla setting).");
-        }
-
-        var ty = rowStart.Y + (d - ImGui.GetTextLineHeight()) / 2f;
-        var x = rowStart.X;
-        using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
-        {
-            var chev = (open ? FontAwesomeIcon.ChevronDown : FontAwesomeIcon.ChevronRight).ToIconString();
-            var ink = Theme.InkBounds(chev);
-            var cw = S(14);
-            dl.AddText(new Vector2(x + (cw - (ink.Z - ink.X)) / 2f - ink.X, rowStart.Y + d / 2f - (ink.Y + ink.W) / 2f),
-                ImGui.GetColorU32(headHovered ? Theme.AccentText : Theme.Muted), chev);
-            x += cw + S(8);
-        }
-
+        else
+            dl.AddCircle(center, cd / 2f - S(0.6f), ImGui.GetColorU32(Theme.Border), 24, S(1.4f));
+        var num = bar.ToString();
+        var nInk = Theme.InkBounds(num);
+        dl.AddText(new Vector2(center.X - (nInk.X + nInk.Z) / 2f, cy - (nInk.Y + nInk.W) / 2f),
+            ImGui.GetColorU32(controlled ? Theme.OnPink : Theme.Muted), num);
         var title = $"Hotbar {bar}";
-        dl.AddText(new Vector2(x, ty), ImGui.GetColorU32(rule != null ? Theme.Text : Theme.Muted), title);
-        x += ImGui.CalcTextSize(title).X + S(10);
+        dl.AddText(new Vector2(left + cd + S(8), cy - ImGui.GetTextLineHeight() / 2f), ImGui.GetColorU32(rule != null ? Theme.Text : Theme.TextSoft), title);
 
-        // Only the game's own state for hotbars without a rule; "paused" for paused rules. Nothing else.
-        var summary = rule is { Enabled: false } ? "paused" : string.Empty;
-        var summaryCol = Theme.Muted;
-        dl.PushClipRect(new Vector2(x, rowStart.Y), new Vector2(right - previewW - S(8), rowStart.Y + d), true);
-        dl.AddText(new Vector2(x, ty), ImGui.GetColorU32(summaryCol), summary);
-        dl.PopClipRect();
+        // Right side: the state pill, and the Edit button left of it.
+        var inGame = plugin.Look.IsShownInGame(bar);
+        var shown = controlled && plugin.Applied.TryGetValue(bar, out var v) ? v : inGame != false;
+        var stateText = inGame == null && !controlled ? "" : shown ? "shown" : "hidden";
+        var stateW = stateText.Length > 0 ? Theme.PillWidth(stateText) : 0f;
+        var editLabel = editing ? "Editing" : "Edit";
+        var editW = EditButtonWidth(editLabel);
+        var pillY = rowStart.Y + (d - ImGui.GetTextLineHeight() - S(2)) / 2f;
 
-        if (preview != null)
+        if (stateText.Length > 0)
         {
-            var after = ImGui.GetCursorScreenPos();
-            if (wispW > 0)
+            ImGui.SetCursorScreenPos(new Vector2(right - stateW, pillY));
+            if (controlled)
             {
-                using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
-                {
-                    var ink = Theme.InkBounds(wispStr);
-                    var wpos = new Vector2(right - previewW - ink.X, rowStart.Y + d / 2f - (ink.Y + ink.W) / 2f);
-                    dl.AddText(wpos, ImGui.GetColorU32(Theme.BrandPink), wispStr);
-                }
-                if (ImGui.IsMouseHoveringRect(new Vector2(right - previewW, rowStart.Y), new Vector2(right - previewW + wispW, rowStart.Y + d)))
-                    ImGui.SetTooltip("Will-o-Bars is controlling this hotbar.");
-            }
-            var pillY = rowStart.Y + (d - ImGui.GetTextLineHeight() - S(2)) / 2f;
-            if (vanilla)
-            {
-                ImGui.SetCursorScreenPos(new Vector2(right - previewW, pillY));
-                if (ChoicePill("##show", "shown", previewOn, Theme.Pink) && !previewOn)
-                    plugin.RequestGameVisibility(bar, true);
+                Theme.Pill(stateText, shown ? Theme.Pink : Grey);
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip($"Vanilla setting: show hotbar {bar}.\nThe same as the game's own \"Display hotbar\" option; Will-o-Bars doesn't control this hotbar.");
-                ImGui.SameLine(0, pillGap);
-                if (ChoicePill("##hide", "hidden", !previewOn, Grey) && previewOn)
-                    plugin.RequestGameVisibility(bar, false);
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip($"Vanilla setting: hide hotbar {bar}.\nThe same as the game's own \"Display hotbar\" option; Will-o-Bars doesn't control this hotbar.");
+                    ImGui.SetTooltip($"Hotbar {bar} is {stateText} right now.\n{WhyText(bar)}");
             }
             else
             {
-                ImGui.SetCursorScreenPos(new Vector2(right - previewW + wispW, pillY));
-                if (struck)
-                {
-                    // Hidden by Will-o-Bars (not by the game): "shown" crossed through.
-                    Theme.Pill("shown", Grey);
-                    var min = ImGui.GetItemRectMin();
-                    var max = ImGui.GetItemRectMax();
-                    var midY = (min.Y + max.Y) / 2f;
-                    dl.AddLine(new Vector2(min.X + S(5), midY), new Vector2(max.X - S(5), midY), ImGui.GetColorU32(Theme.TextOn(Grey)), S(1.6f));
-                    if (ImGui.IsItemHovered())
-                        ImGui.SetTooltip($"Hotbar {bar} is hidden by Will-o-Bars on {WhoText(sel)}.\nChange it with the Mode below.");
-                }
-                else
-                {
-                    Theme.Pill(preview, previewOn ? Theme.Pink : Grey);
-                    if (ImGui.IsItemHovered())
-                        ImGui.SetTooltip($"Hotbar {bar} is {preview} on {WhoText(sel)}.\nWill-o-Bars controls this hotbar: change it with the Mode below.");
-                }
-            }
-            ImGui.SetCursorScreenPos(after);
-            ImGui.Dummy(Vector2.Zero);
-        }
-
-        if (!open)
-            return;
-
-        // ---- unfolded: settings for this hotbar
-        ImGuiHelpers.ScaledDummy(2f);
-
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextColored(Theme.TextSoft, "Mode");
-        ImGui.SameLine();
-        ImGui.SetCursorScreenPos(new Vector2(left + S(64), ImGui.GetCursorScreenPos().Y));
-        var pauseW = rule != null ? d + S(8) : 0f;
-        ImGui.SetNextItemWidth(Math.Max(S(90), Math.Min(S(150), right - ImGui.GetCursorScreenPos().X - pauseW)));
-        var gameLabel = $"Game setting ({GameState(bar)})";
-        using (var combo = ImRaii.Combo("##mode", rule == null ? gameLabel : ModeName(rule.Mode)))
-        {
-            if (combo.Success)
-            {
-                if (ImGui.Selectable(gameLabel, rule == null))
-                {
-                    if (rule != null)
-                    {
-                        Config.Rules.Remove(rule);
-                        plugin.Save();
-                    }
-                }
+                // Game setting: click to switch the game's own "Display hotbar" option.
+                if (ChoicePill("##vis", stateText, true, shown ? Theme.Green : Grey))
+                    plugin.RequestGameVisibility(bar, !shown);
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Use the game's own setting for this hotbar; Will-o-Bars leaves it alone.");
-
-                foreach (var m in new[] { RuleMode.Show, RuleMode.ShowOnly, RuleMode.HideOn })
-                {
-                    if (ImGui.Selectable(ModeName(m), rule?.Mode == m))
-                    {
-                        if (rule == null)
-                        {
-                            rule = new HotbarRule { Hotbar = bar };
-                            Config.Rules.Add(rule);
-                        }
-                        rule.Mode = m;
-                        plugin.Save();
-                    }
-                }
+                    ImGui.SetTooltip($"Game setting: hotbar {bar} is {stateText}.\nClick to {(shown ? "hide" : "show")} it (the game's own \"Display hotbar\" option).");
             }
         }
+
+        ImGui.SetCursorScreenPos(new Vector2(right - stateW - (stateW > 0 ? S(6) : 0) - editW, rowStart.Y + (d - (ImGui.GetTextLineHeight() + S(4))) / 2f));
+        if (EditButton("##edit", editLabel, editing))
+            plugin.RulesWindow.Open(bar);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Game setting: whatever the game itself does.\nShow: always visible.\nShow only on: visible only on the jobs you tick below.\nHide on: hidden on the jobs you tick below, visible everywhere else.");
+            ImGui.SetTooltip(rule == null ? $"Make a rule for hotbar {bar}." : $"Edit the rule for hotbar {bar}.");
 
-        if (rule != null)
-        {
-            ImGui.SameLine(0, S(8));
-            var paused = !rule.Enabled;
-            if (Theme.IconCircle("##pause", paused ? FontAwesomeIcon.EyeSlash : FontAwesomeIcon.Eye, paused ? Theme.Muted : Theme.AccentText, d))
-            {
-                rule.Enabled = !rule.Enabled;
-                plugin.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip(paused ? "Paused (the hotbar is left visible). Click to turn it back on." : "On. Click to pause this hotbar's rule.");
-        }
-
-        // Own actions per class/job: shows the game's real "Shared" setting until the player changes it here.
-        var separate = rule?.SeparatePerJob ?? plugin.IsHotbarShared(bar) == false;
-        if (ImGui.Checkbox("Own actions per class/job##sep", ref separate))
+        // Second line: what the rule does, in words.
+        ImGui.SetCursorScreenPos(new Vector2(left + cd + S(8), rowStart.Y + d + S(2)));
+        using (ImRaii.TextWrapPos(ImGui.GetCursorPosX() + (right - left - cd - S(8))))
         {
             if (rule == null)
             {
-                // Start from what the game shows now, so ticking this box doesn't also show or hide the hotbar.
-                var shownNow = plugin.Look.IsShownInGame(bar) != false;
-                rule = new HotbarRule { Hotbar = bar, Mode = shownNow ? RuleMode.Show : RuleMode.ShowOnly };
-                Config.Rules.Add(rule);
+                Theme.Wrapped(editing ? "Game setting for now. New rule waiting in the editor." : "Game setting. Will-o-Bars leaves it alone.", Theme.Muted);
             }
-            rule.SeparatePerJob = separate;
-            plugin.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Each class/job keeps its own actions on this hotbar. Put Fisher actions on it while you're\n" +
-                             "Fisher and they stay on Fisher: other classes/jobs get their own (or an empty) bar,\n" +
-                             "and the Fisher actions come back when you switch to Fisher again.\n\n" +
-                             "This is the game's \"Shared\" setting (Character Configuration > Hotbar Settings), unticked.\n" +
-                             "A backup of your hotbars is saved automatically right before it changes.");
-
-        // The jobs this hotbar is shown/hidden on, edited right here.
-        if (rule is { Mode: RuleMode.ShowOnly or RuleMode.HideOn })
-        {
-            ImGuiHelpers.ScaledDummy(2f);
-            ImGui.TextColored(Theme.TextSoft, rule.Mode == RuleMode.ShowOnly ? "Shown only on:" : "Hidden on:");
-            var r = rule;
-            DrawJobGrid($"bar{bar}", r.Jobs.Contains, (ids, on) =>
+            else
             {
-                foreach (var id in ids)
-                {
-                    if (on) r.Jobs.Add(id);
-                    else r.Jobs.Remove(id);
-                }
-                plugin.Save();
-            }, compact: true);
+                var summary = RuleLogic.Summary(rule);
+                if (!rule.Enabled)
+                    Theme.Wrapped("Paused: " + summary, Theme.Muted);
+                else
+                    SummaryText(summary);
+            }
         }
-
+        ImGui.Dummy(Vector2.Zero);
     }
 
-    private static string WhoText(System.Collections.Generic.List<uint> sel)
-        => sel.Count == 1 ? Jobs.Get(sel[0])?.Name ?? "the picked class/job" : $"the {sel.Count} picked classes/jobs";
-
-    private static string ModeName(RuleMode m) => m switch
+    /// <summary>A summary with "Show"/"Hide"/"show"/"hide" in pink.</summary>
+    private static void SummaryText(string summary)
     {
-        RuleMode.ShowOnly => "Show only on",
-        RuleMode.HideOn => "Hide on",
-        _ => "Show",
-    };
-
-    /// <summary>Change the rule for one hotbar so it is shown/hidden on these jobs, creating a rule when needed.</summary>
-    private void SetVisible(int bar, System.Collections.Generic.List<uint> jobs, bool visible)
-    {
-        var rule = Config.Rules.FirstOrDefault(r => r.Hotbar == bar);
-        if (rule == null)
+        var words = System.Text.RegularExpressions.Regex.Matches(summary, @"\S+\s*");
+        var right = ImGui.GetWindowPos().X + ImGui.GetWindowContentRegionMax().X;
+        var wrap = ImGui.GetCursorScreenPos().X;
+        var startX = ImGui.GetCursorScreenPos().X;
+        var maxX = Theme.CardInnerRight;
+        var first = true;
+        foreach (System.Text.RegularExpressions.Match m in words)
         {
-            if (visible)
-                return; // no rule = already shown everywhere
-            rule = new HotbarRule { Hotbar = bar, Mode = RuleMode.HideOn };
-            Config.Rules.Add(rule);
-        }
-
-        rule.Enabled = true;
-        if (rule.Mode == RuleMode.Show)
-        {
-            if (visible)
+            var w = m.Value;
+            var bare = w.Trim().TrimEnd(',', '.');
+            var pink = bare is "Show" or "Hide" or "show" or "hide";
+            if (!first)
             {
-                plugin.Save();
-                return;
+                if (ImGui.GetItemRectMax().X + ImGui.CalcTextSize(w.TrimEnd()).X <= maxX)
+                    ImGui.SameLine(0, 0);
+                else
+                    ImGui.SetCursorScreenPos(new Vector2(startX, ImGui.GetCursorScreenPos().Y));
             }
-            rule.Mode = RuleMode.HideOn;
-            rule.Jobs.Clear();
+            ImGui.TextColored(pink ? Theme.AccentText : Theme.TextSoft, w);
+            first = false;
         }
+    }
 
-        // ShowOnly lists the visible jobs, HideOn lists the hidden ones.
-        var add = visible == (rule.Mode == RuleMode.ShowOnly);
-        foreach (var j in jobs)
+    private static float EditButtonWidth(string label)
+    {
+        float iconW;
+        using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
+            iconW = ImGui.CalcTextSize(FontAwesomeIcon.Pen.ToIconString()).X;
+        return iconW + S(5) + ImGui.CalcTextSize(label).X + S(18);
+    }
+
+    /// <summary>Small rounded button with a pen icon: pink outline, filled pink while that hotbar is being edited.</summary>
+    internal static bool EditButton(string id, string label, bool on)
+    {
+        var width = EditButtonWidth(label);
+        var h = ImGui.GetTextLineHeight() + S(4);
+        var pos = ImGui.GetCursorScreenPos();
+        var clicked = ImGui.InvisibleButton(id, new Vector2(width, h));
+        var hovered = ImGui.IsItemHovered();
+        var dl = ImGui.GetWindowDrawList();
+        var round = Theme.UseDalamud ? Theme.R(0) : h / 2f;
+        var fill = on ? Theme.Pink : hovered ? Theme.GlassHover : new Vector4(0, 0, 0, 0);
+        dl.AddRectFilled(pos, pos + new Vector2(width, h), ImGui.GetColorU32(fill), round);
+        dl.AddRect(pos, pos + new Vector2(width, h), ImGui.GetColorU32(on ? Theme.Outline : Theme.Pink), round, ImDrawFlags.None, S(1.4f));
+        var col = ImGui.GetColorU32(on ? Theme.OnPink : Theme.AccentText);
+        var x = pos.X + S(9);
+        using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
         {
-            if (add) rule.Jobs.Add(j);
-            else rule.Jobs.Remove(j);
+            var icon = FontAwesomeIcon.Pen.ToIconString();
+            var ink = Theme.InkBounds(icon);
+            dl.AddText(new Vector2(x - ink.X, pos.Y + h / 2f - (ink.Y + ink.W) / 2f), col, icon);
+            x += ImGui.CalcTextSize(icon).X + S(5);
         }
-        plugin.Save();
+        var lInk = Theme.InkBounds(label);
+        dl.AddText(new Vector2(x, pos.Y + h / 2f - (lInk.Y + lInk.W) / 2f), col, label);
+        if (hovered)
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        return clicked;
     }
 
     // ---------------------------------------------------------------- "Backups" tab
@@ -1525,7 +1042,7 @@ public sealed class MainWindow : Window
     /// Job icons grouped by role. Click toggles one, Shift+click sets a range, click-and-drag paints over many,
     /// clicking a role name toggles the whole group. <paramref name="set"/> gets the changed ids and their new state.
     /// </summary>
-    private void DrawJobGrid(string id, Func<uint, bool> isOn, Action<System.Collections.Generic.IReadOnlyList<uint>, bool> set, bool compact = false)
+    internal void DrawJobGrid(string id, Func<uint, bool> isOn, Action<System.Collections.Generic.IReadOnlyList<uint>, bool> set, bool compact = false)
     {
         if (!grids.TryGetValue(id, out var st))
             grids[id] = st = new GridState();
@@ -1643,7 +1160,7 @@ public sealed class MainWindow : Window
         }
     }
 
-    private static void DrawJobIcon(uint iconId, float size, float alpha)
+    internal static void DrawJobIcon(uint iconId, float size, float alpha)
     {
         var tex = Plugin.TextureProvider.GetFromGameIcon(new GameIconLookup(iconId)).GetWrapOrEmpty();
         ImGui.Image(tex.Handle, new Vector2(size), Vector2.Zero, Vector2.One, new Vector4(1f, 1f, 1f, alpha));
@@ -1652,7 +1169,7 @@ public sealed class MainWindow : Window
     // ---------------------------------------------------------------- small widgets
 
     /// <summary>Small pink text that acts like a link.</summary>
-    private static bool TextLink(string label)
+    internal static bool TextLink(string label)
     {
         ImGui.TextColored(Theme.AccentText, label);
         var hovered = ImGui.IsItemHovered();
@@ -1667,7 +1184,7 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>Small pill you can click: filled when <paramref name="active"/>, just an outline when not.</summary>
-    private static bool ChoicePill(string id, string text, bool active, Vector4 fill)
+    internal static bool ChoicePill(string id, string text, bool active, Vector4 fill)
     {
         var pad = new Vector2(S(7), S(1));
         var textSize = ImGui.CalcTextSize(text);
@@ -1725,7 +1242,7 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>Rounded chip with an icon and a label; filled pink when <paramref name="on"/>.</summary>
-    private static bool Chip(string id, FontAwesomeIcon icon, string label, bool on, float width)
+    internal static bool Chip(string id, FontAwesomeIcon icon, string label, bool on, float width)
     {
         var h = ImGui.GetFrameHeight();
         var pos = ImGui.GetCursorScreenPos();
