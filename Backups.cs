@@ -242,7 +242,8 @@ public sealed class Backups
         }
         log.Information($"Saved hotbar backup {file} ({backup.ActionCount} actions).");
 
-        Reload();
+        // Add it to the list instead of reading every backup file from disk again.
+        List = List.Append((Path: file, Backup: backup)).OrderByDescending(x => x.Backup.Created).ToList();
         PruneAutomatic();
         LastMessage = automatic ? null : $"Saved: {backup.ActionCount} actions on all your hotbars.";
         return true;
@@ -326,7 +327,7 @@ public sealed class Backups
         {
             log.Warning(e, $"Could not delete backup {path}.");
         }
-        Reload();
+        List = List.Where(x => File.Exists(x.Path)).ToList();
     }
 
     /// <summary>Whether this character already has an automatic backup (made before Will-o-Bars changed anything).</summary>
