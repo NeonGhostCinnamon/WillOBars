@@ -6,6 +6,10 @@ using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using Dalamud.Game.ClientState.Objects.Enums;
+using Dalamud.Game.ClientState.Objects.SubKinds;
+using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.System.String;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
@@ -19,7 +23,10 @@ namespace WillOBars;
 
 public sealed class Plugin : IDalamudPlugin
 {
-    private const string Command = "/willobars";
+    /// <summary>"WillOBars", or "WillOBarsTest" for a test build that runs next to the normal one.</summary>
+    public static readonly string Id = typeof(Plugin).Assembly.GetName().Name ?? "WillOBars";
+    public static bool IsTestBuild => Id != "WillOBars";
+    private static readonly string Command = IsTestBuild ? "/willobarstest" : "/willobars";
 
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] private static ICommandManager CommandManager { get; set; } = null!;
@@ -31,11 +38,23 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     [PluginService] private static IGameConfig GameConfig { get; set; } = null!;
     [PluginService] private static IGameGui GameGui { get; set; } = null!;
+    [PluginService] private static IPartyList PartyList { get; set; } = null!;
     [PluginService] private static IPluginLog Log { get; set; } = null!;
 
     private readonly Configuration config;
-    private readonly WindowSystem windows = new("WillOBars");
+    private readonly WindowSystem windows = new(Id);
     private readonly MainWindow mainWindow;
+    private readonly RulesWindow rulesWindow;
+
+    /// <summary>The rule editor (popout beside the main window).</summary>
+    public RulesWindow RulesWindow => rulesWindow;
+
+    /// <summary>What the game was doing at the last check.</summary>
+    public GameState State { get; private set; } = new();
+
+    /// <summary>Per controlled hotbar: which case decided it at the last check (-1 = "otherwise").</summary>
+    public IReadOnlyDictionary<int, int> DecidingCase => decidingCase;
+    private readonly Dictionary<int, int> decidingCase = new();
 
     public Configuration Configuration => config;
 
@@ -76,6 +95,7 @@ public sealed class Plugin : IDalamudPlugin
         config.HotbarsFolded = true;
 
         Jobs.Load(DataManager);
+        GameData.Load(DataManager);
         SettingsTransfer.Folder = string.IsNullOrEmpty(config.SaveFolder) ? null : config.SaveFolder;
         Backups = new Backups(PluginInterface.GetPluginConfigDirectory(), SettingsTransfer.Folder, GameConfig, Log);
         Look = new HotbarLook(GameGui);
@@ -90,7 +110,9 @@ public sealed class Plugin : IDalamudPlugin
         }));
 
         mainWindow = new MainWindow(this);
+        rulesWindow = new RulesWindow(this, mainWindow);
         windows.AddWindow(mainWindow);
+        windows.AddWindow(rulesWindow);
 
         PluginInterface.UiBuilder.Draw += windows.Draw;
         PluginInterface.UiBuilder.OpenConfigUi += mainWindow.Toggle;
@@ -162,13 +184,17 @@ public sealed class Plugin : IDalamudPlugin
         if (Condition[ConditionFlag.BetweenAreas] || Condition[ConditionFlag.BetweenAreas51])
             return;
 
+        State = ReadState(local);
+
         if (dirty && (now - dirtySince).TotalMilliseconds >= 300)
         {
-            Apply(job);
+            Apply(job, force: true);
             dirty = false;
             return;
         }
 
+        // Combat, weather, zone...: re-check the rules every time, and change only hotbars whose outcome changed.
+        Apply(job, force: false);
         Enforce(now);
     }
 
@@ -245,16 +271,27 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
-    private void Apply(uint job)
+    /// <summary>
+    /// Works out what every controlled hotbar should be right now. <paramref name="force"/> (after a job change,
+    /// login or settings change) sends the command for every hotbar and checks the "Shared" settings;
+    /// otherwise only hotbars whose outcome changed get a command.
+    /// </summary>
+    private void Apply(uint job, bool force)
     {
         CurrentJob = job;
 
         var wanted = new Dictionary<int, bool>();
+        decidingCase.Clear();
         foreach (var rule in config.Rules.Where(r => r.Enabled && r.Hotbar is >= 1 and <= 10))
         {
+            var (show, which) = RuleLogic.Evaluate(rule, State);
+            if (!wanted.TryAdd(rule.Hotbar, show))
+                continue;
+            decidingCase[rule.Hotbar] = which;
+
             // Only touch the game's "Shared" setting when the player chose it here.
-            if (wanted.TryAdd(rule.Hotbar, rule.VisibleOn(job)) && rule.SeparatePerJob is { } separate)
-                EnsureSharing(rule.Hotbar, !separate, rule.VisibleOn(job));
+            if (force && rule.SeparatePerJob is { } separate)
+                EnsureSharing(rule.Hotbar, !separate, show);
         }
 
         // Bars that are no longer controlled (rule removed or paused) are shown again.
@@ -262,18 +299,65 @@ public sealed class Plugin : IDalamudPlugin
         {
             SetHotbarVisible(bar, true);
             applied.Remove(bar);
+            fixes.Remove(bar);
         }
 
-        // Start over with the fixing, and give the commands below a moment before checking on them.
-        fixes.Clear();
+        // Give the commands below a moment before checking on them (and start over with the fixing).
+        if (force)
+            fixes.Clear();
         var now = DateTime.UtcNow;
         foreach (var (bar, visible) in wanted)
         {
+            if (!force && applied.TryGetValue(bar, out var was) && was == visible)
+                continue;
             SetHotbarVisible(bar, visible);
             applied[bar] = visible;
             fixes[bar] = (now, 0);
         }
     }
+
+    /// <summary>Reads everything the rules can check. Cheap: a few flags and lookups.</summary>
+    private unsafe GameState ReadState(IPlayerCharacter local)
+    {
+        var s = new GameState
+        {
+            Job = local.ClassJob.RowId,
+            InCombat = Condition[ConditionFlag.InCombat],
+            WeaponDrawn = local.StatusFlags.HasFlag(StatusFlags.WeaponOut),
+            Mounted = Condition[ConditionFlag.Mounted] || Condition[ConditionFlag.RidingPillion],
+            Crafting = Condition[ConditionFlag.Crafting] || Condition[ConditionFlag.ExecutingCraftingAction],
+            Gathering = Condition[ConditionFlag.Gathering] || Condition[ConditionFlag.ExecutingGatheringAction] || Condition[ConditionFlag.Fishing],
+            InDuty = Condition[ConditionFlag.BoundByDuty] || Condition[ConditionFlag.BoundByDuty56] || Condition[ConditionFlag.BoundByDuty95],
+            InParty = PartyList.Length > 1 || Condition[ConditionFlag.ParticipatingInCrossWorldPartyOrAlliance],
+        };
+
+        var territory = ClientState.TerritoryType;
+        if (territory != lastTerritory)
+        {
+            lastTerritory = territory;
+            var row = DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>().GetRowOrDefault(territory);
+            territoryPlaceName = row?.PlaceName.RowId ?? 0;
+            territoryIsTown = row?.TerritoryIntendedUse.RowId == 0;
+            territoryDutyType = row?.ContentFinderCondition.ValueNullable?.ContentType.RowId ?? 0;
+        }
+        s.PlaceName = territoryPlaceName;
+        s.DutyType = territoryDutyType;
+        if (s.InDuty && s.DutyType == 0 && ClientState.IsPvP)
+            s.DutyType = 6;
+
+        var info = TerritoryInfo.Instance();
+        s.CityOrSanctuary = territoryIsTown || (info != null && info->InSanctuary);
+
+        var weather = WeatherManager.Instance();
+        s.Weather = weather != null ? weather->GetCurrentWeather() : 0u;
+        return s;
+    }
+
+    // The current zone, looked up once per zone change.
+    private uint lastTerritory = uint.MaxValue;
+    private uint territoryPlaceName;
+    private bool territoryIsTown;
+    private uint territoryDutyType;
 
     /// <summary>The game's own "Shared" setting for a hotbar right now (null when the hotbars aren't loaded).</summary>
     public unsafe bool? IsHotbarShared(int hotbar)
@@ -394,7 +478,7 @@ public sealed class Plugin : IDalamudPlugin
             foreach (var r in config.Rules)
                 r.Enabled = false;
             Save();
-            Apply(CurrentJob);
+            Apply(CurrentJob, force: true);
             Backups.Restore(backup);
         });
 

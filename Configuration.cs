@@ -1,13 +1,14 @@
 using Dalamud.Configuration;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace WillOBars;
 
 [Serializable]
 public class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 2;
+    public int Version { get; set; } = 3;
 
     /// <summary>One rule per hotbar. Starts empty: the player adds the rules they want.</summary>
     public List<HotbarRule> Rules { get; set; } = new();
@@ -34,6 +35,23 @@ public class Configuration : IPluginConfiguration
             changed = true;
         }
 
+        // Version 3: rules became cases ("when ... show/hide", "otherwise ..."). Older rules are converted.
+        if (Version < 3)
+        {
+            foreach (var r in Rules)
+                r.Upgrade();
+            Version = 3;
+            changed = true;
+        }
+        foreach (var r in Rules)
+        {
+            if (r.Cases == null)
+            {
+                r.Upgrade();
+                changed = true;
+            }
+        }
+
         var seen = new HashSet<int>();
         var before = Rules.Count;
         Rules.RemoveAll(r => r.Hotbar is < 1 or > 10 || !seen.Add(r.Hotbar));
@@ -51,6 +69,9 @@ public class Configuration : IPluginConfiguration
 
     /// <summary>Folder for exported settings and hotbar backups, picked by the player. Empty until they pick one.</summary>
     public string SaveFolder { get; set; } = string.Empty;
+
+    /// <summary>The rule editor stays stuck to the side of the main window (and moves with it).</summary>
+    public bool RulesStuck { get; set; } = true;
 
     /// <summary>Hotbar cards that are unfolded in the window.</summary>
     public HashSet<int> OpenBars { get; set; } = new();
@@ -81,7 +102,47 @@ public class HotbarRule
     public bool? SeparatePerJob { get; set; }
 
 
-    /// <summary>Whether the hotbar should be visible on this job.</summary>
+    /// <summary>
+    /// The cases, checked from the top: the first one that matches decides. Null in settings from before version 3
+    /// (then <see cref="Mode"/> and <see cref="Jobs"/> are converted by <see cref="Upgrade"/>).
+    /// </summary>
+    public List<RuleCase>? Cases { get; set; }
+
+    /// <summary>Shown (or hidden) when no case matches.</summary>
+    public bool OtherwiseShow { get; set; } = true;
+
+    /// <summary>Turn the old Mode + Jobs into cases.</summary>
+    public void Upgrade()
+    {
+        Cases = new List<RuleCase>();
+        switch (Mode)
+        {
+            case RuleMode.ShowOnly:
+                Cases.Add(new RuleCase { Show = true, Conditions = { new RuleCondition { Kind = ConditionKind.Job, Ids = new HashSet<uint>(Jobs) } } });
+                OtherwiseShow = false;
+                break;
+            case RuleMode.HideOn:
+                Cases.Add(new RuleCase { Show = false, Conditions = { new RuleCondition { Kind = ConditionKind.Job, Ids = new HashSet<uint>(Jobs) } } });
+                OtherwiseShow = true;
+                break;
+            default:
+                OtherwiseShow = true;
+                break;
+        }
+    }
+
+    public HotbarRule Copy() => new()
+    {
+        Hotbar = Hotbar,
+        Mode = Mode,
+        Jobs = new HashSet<uint>(Jobs),
+        Enabled = Enabled,
+        SeparatePerJob = SeparatePerJob,
+        Cases = Cases?.Select(c => c.Copy()).ToList(),
+        OtherwiseShow = OtherwiseShow,
+    };
+
+    /// <summary>Old (before version 3): whether the hotbar should be visible on this job.</summary>
     public bool VisibleOn(uint jobId) => Mode switch
     {
         RuleMode.ShowOnly => Jobs.Contains(jobId),

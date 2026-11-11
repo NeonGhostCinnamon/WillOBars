@@ -25,7 +25,7 @@ public static class SettingsTransfer
 
     public sealed class Data
     {
-        public int Version { get; set; } = 2;
+        public int Version { get; set; } = 3;
         public DateTime Exported { get; set; }
         public List<HotbarRule> Rules { get; set; } = new();
         public ThemeMode ThemeChoice { get; set; } = ThemeMode.Dark;
@@ -43,14 +43,7 @@ public static class SettingsTransfer
     public static Data From(Configuration config) => new()
     {
         Exported = DateTime.Now,
-        Rules = config.Rules.Select(r => new HotbarRule
-        {
-            Hotbar = r.Hotbar,
-            Mode = r.Mode,
-            Jobs = new HashSet<uint>(r.Jobs),
-            Enabled = r.Enabled,
-            SeparatePerJob = r.SeparatePerJob,
-        }).ToList(),
+        Rules = config.Rules.Select(r => r.Copy()).ToList(),
         ThemeChoice = config.ThemeChoice,
     };
 
@@ -110,6 +103,14 @@ public static class SettingsTransfer
                 }
                 data.Version = 2;
             }
+
+            // Settings from before version 3 have no cases yet.
+            foreach (var r in data.Rules)
+            {
+                if (r.Cases == null)
+                    r.Upgrade();
+            }
+            data.Version = 3;
             return data;
         }
         catch (Exception)
