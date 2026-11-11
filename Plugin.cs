@@ -174,6 +174,7 @@ public sealed class Plugin : IDalamudPlugin
 
     // Per hotbar: when we last tried to fix it, and how many times in a row.
     private readonly Dictionary<int, (DateTime Last, int Tries)> fixes = new();
+    private const int MaxFixTries = 4;
 
     /// <summary>
     /// Keeps controlled hotbars the way the rules say, also when something else (the HUD Layout editor,
@@ -217,6 +218,17 @@ public sealed class Plugin : IDalamudPlugin
             if ((now - f.Last).TotalMilliseconds < 1500)
                 continue;
 
+            // The game keeps putting it back: stop fighting it until the next job change or settings change.
+            if (f.Tries >= MaxFixTries)
+            {
+                if (f.Tries == MaxFixTries)
+                {
+                    Log.Warning($"Hotbar {bar} keeps getting {(wanted ? "hidden" : "shown")} by the game; leaving it alone until the rules are applied again.");
+                    fixes[bar] = (now, f.Tries + 1);
+                }
+                continue;
+            }
+
             if (f.Tries < 2)
             {
                 Log.Information($"Hotbar {bar} should be {(wanted ? "shown" : "hidden")} but isn't; sending the command again.");
@@ -252,10 +264,14 @@ public sealed class Plugin : IDalamudPlugin
             applied.Remove(bar);
         }
 
+        // Start over with the fixing, and give the commands below a moment before checking on them.
+        fixes.Clear();
+        var now = DateTime.UtcNow;
         foreach (var (bar, visible) in wanted)
         {
             SetHotbarVisible(bar, visible);
             applied[bar] = visible;
+            fixes[bar] = (now, 0);
         }
     }
 
