@@ -1158,6 +1158,22 @@ public sealed class MainWindow : Window
 
     private string backupName = string.Empty;
 
+    // The saved settings files, looked up every few seconds instead of reading the folder every frame.
+    private System.Collections.Generic.List<string>? settingsFiles;
+    private DateTime settingsFilesAt;
+
+    private System.Collections.Generic.List<string> SettingsFiles()
+    {
+        var now = DateTime.UtcNow;
+        if (settingsFiles == null || now - settingsFilesAt > TimeSpan.FromSeconds(5))
+        {
+            try { settingsFiles = SettingsTransfer.Files(); }
+            catch (Exception) { settingsFiles = new System.Collections.Generic.List<string>(); }
+            settingsFilesAt = now;
+        }
+        return settingsFiles;
+    }
+
     // ---------------------------------------------------------------- settings export / import
 
     private readonly Dalamud.Interface.ImGuiFileDialog.FileDialogManager fileDialog = new();
@@ -1200,6 +1216,7 @@ public sealed class MainWindow : Window
                         try
                         {
                             plugin.SetSaveFolder(path);
+                            settingsFiles = null;
                             SetTransfer($"Saves now go to {path}.", false);
                         }
                         catch (Exception e)
@@ -1225,6 +1242,7 @@ public sealed class MainWindow : Window
                     try
                     {
                         var path = SettingsTransfer.SaveFile(SettingsTransfer.From(Config));
+                        settingsFiles = null;
                         SetTransfer($"Saved as {System.IO.Path.GetFileName(path)}.", false);
                     }
                     catch (Exception e)
@@ -1261,7 +1279,7 @@ public sealed class MainWindow : Window
                 Theme.Wrapped(transferMessage, transferIsError ? Theme.Amber : Theme.AccentText);
 
             // Saved files
-            var files = SettingsTransfer.Files();
+            var files = SettingsFiles();
             if (files.Count > 0)
             {
                 ImGuiHelpers.ScaledDummy(2f);
@@ -1304,6 +1322,7 @@ public sealed class MainWindow : Window
                             {
                                 try { System.IO.File.Delete(file); }
                                 catch (Exception e) { SetTransfer($"Couldn't delete: {e.Message}", true); }
+                                settingsFiles = null;
                                 ImGui.CloseCurrentPopup();
                             }
                             ImGui.SameLine();
