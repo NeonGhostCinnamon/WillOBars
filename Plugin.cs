@@ -412,5 +412,16 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenMainUi -= mainWindow.Toggle;
         windows.RemoveAllWindows();
         TitleFont.Dispose();
+
+        // Turned off or uninstalled: give back the hotbars the rules hid, so none seem to have disappeared.
+        if (Framework.IsInFrameworkUpdateThread && ClientState.IsLoggedIn)
+        {
+            foreach (var (bar, visible) in applied)
+            {
+                if (!visible)
+                    SetHotbarVisible(bar, true);
+            }
+        }
+        applied.Clear();
     }
 }
