@@ -1291,12 +1291,26 @@ public sealed class MainWindow : Window
                     }
                     ImGui.SameLine(0, S(6));
                     if (Theme.IconCircle("##del", FontAwesomeIcon.Trash, Theme.Text, d))
-                    {
-                        try { System.IO.File.Delete(file); }
-                        catch (Exception e) { SetTransfer($"Couldn't delete: {e.Message}", true); }
-                    }
+                        ImGui.OpenPopup("##confirmfiledel");
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip("Delete this file");
+
+                    using (var filePopup = ImRaii.Popup("##confirmfiledel"))
+                    {
+                        if (filePopup.Success)
+                        {
+                            ImGui.TextColored(Theme.Text, "Delete this settings file?");
+                            if (Theme.Button("Delete", new Vector2(S(90), 0)))
+                            {
+                                try { System.IO.File.Delete(file); }
+                                catch (Exception e) { SetTransfer($"Couldn't delete: {e.Message}", true); }
+                                ImGui.CloseCurrentPopup();
+                            }
+                            ImGui.SameLine();
+                            if (ImGui.Button("Cancel", new Vector2(S(90), 0)))
+                                ImGui.CloseCurrentPopup();
+                        }
+                    }
                 }
             }
 
