@@ -87,7 +87,19 @@ public sealed class Backups
         this.gameConfig = gameConfig;
         this.log = log;
         folder = pluginBackups;
-        UseFolder(saveFolder);
+        try
+        {
+            UseFolder(saveFolder);
+        }
+        catch (Exception e)
+        {
+            // The picked folder is gone (unplugged drive, deleted folder...): don't stop the plugin from loading.
+            log.Warning(e, $"Could not use the save folder {saveFolder}; using the plugin's own folder for now.");
+            folder = pluginBackups;
+            Directory.CreateDirectory(pluginBackups);
+            Reload();
+            LastMessage = $"Couldn't reach your save folder ({saveFolder}). Backups are kept in the plugin's own folder until you pick a folder again.";
+        }
     }
 
     /// <summary>
@@ -129,6 +141,11 @@ public sealed class Backups
     public void Reload()
     {
         var list = new List<(string, HotbarBackup)>();
+        if (!Directory.Exists(folder))
+        {
+            List = list;
+            return;
+        }
         foreach (var file in Directory.EnumerateFiles(folder, "*.json"))
         {
             try
@@ -210,9 +227,19 @@ public sealed class Backups
         // must not overwrite each other.
         var baseName = $"{backup.Created:yyyyMMdd-HHmmss}{(automatic ? "-auto" : string.Empty)}";
         var file = Path.Combine(folder, baseName + ".json");
-        for (var n = 2; File.Exists(file); n++)
-            file = Path.Combine(folder, $"{baseName}-{n}.json");
-        File.WriteAllText(file, JsonSerializer.Serialize(backup, Json));
+        try
+        {
+            Directory.CreateDirectory(folder);
+            for (var n = 2; File.Exists(file); n++)
+                file = Path.Combine(folder, $"{baseName}-{n}.json");
+            File.WriteAllText(file, JsonSerializer.Serialize(backup, Json));
+        }
+        catch (Exception e)
+        {
+            log.Warning(e, $"Could not save hotbar backup {file}.");
+            LastMessage = $"Couldn't save the backup: {e.Message}";
+            return false;
+        }
         log.Information($"Saved hotbar backup {file} ({backup.ActionCount} actions).");
 
         Reload();

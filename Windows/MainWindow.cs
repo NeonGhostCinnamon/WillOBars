@@ -1302,8 +1302,15 @@ public sealed class MainWindow : Window
 
             if (!string.IsNullOrEmpty(folder) && TextLink("Open the save folder"))
             {
-                System.IO.Directory.CreateDirectory(folder);
-                Util.OpenLink(folder);
+                try
+                {
+                    System.IO.Directory.CreateDirectory(folder);
+                    Util.OpenLink(folder);
+                }
+                catch (Exception e)
+                {
+                    SetTransfer($"Couldn't open the folder: {e.Message}", true);
+                }
             }
 
             // Confirm before replacing anything.

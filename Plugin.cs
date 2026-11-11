@@ -62,6 +62,9 @@ public sealed class Plugin : IDalamudPlugin
     private DateTime dirtySince = DateTime.UtcNow;
     private DateTime lastPoll = DateTime.MinValue;
 
+    // Characters the first backup was already tried for this session (so a failing save isn't retried every frame).
+    private readonly HashSet<ulong> firstBackupTried = new();
+
     public Plugin()
     {
         config = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
@@ -144,8 +147,11 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         // First time on this character: keep a copy of the hotbars exactly as they were before Will-o-Bars.
-        if (Backups.Ready && !Backups.HasAutomaticFor(Backups.CurrentContentId))
-            Backups.Save(Backups.FirstBackupName, local.Name.TextValue, automatic: true);
+        if (Backups.Ready && !Backups.HasAutomaticFor(Backups.CurrentContentId) && firstBackupTried.Add(Backups.CurrentContentId))
+        {
+            try { Backups.Save(Backups.FirstBackupName, local.Name.TextValue, automatic: true); }
+            catch (Exception e) { Log.Error(e, "Could not save the first hotbar backup."); }
+        }
 
         // Safety net in case a job change event was missed.
         var job = local.ClassJob.RowId;
