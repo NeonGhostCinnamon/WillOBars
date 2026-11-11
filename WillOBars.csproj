@@ -1,7 +1,7 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
     <Version>1.1.0.0</Version>
-    <Description>Show or hide hotbars depending on your class or job. Pick a hotbar, choose &quot;Show only on&quot; or &quot;Hide on&quot;, and click the jobs it applies to. More hotbar magic is in the works!&#10;&#10;Open the settings with /willobars.</Description>
+    <Description>Tinker with your hotbars, such as showing them when it rains but only when you're in combat!&#10;/willobars opens the settings.</Description>
     <PackageProjectUrl>https://github.com/NeonGhostCinnamon/WillOBars</PackageProjectUrl>
     <IsPackable>false</IsPackable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

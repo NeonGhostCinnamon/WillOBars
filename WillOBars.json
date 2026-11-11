@@ -1,8 +1,8 @@
 {
   "Author": "NeonGhostCinnamon",
   "Name": "Will-o-Bars",
-  "Punchline": "Show or hide hotbars depending on your class or job.",
-  "Description": "Show or hide hotbars depending on your class or job. Pick a hotbar, choose \"Show only on\" or \"Hide on\", and click the jobs it applies to. More hotbar magic is in the works!\n\nOpen the settings with /willobars.",
+  "Punchline": "Change your hotbars depending on the user's ruleset.",
+  "Description": "Tinker with your hotbars, such as showing them when it rains but only when you're in combat!\n/willobars opens the settings.",
   "Tags": [
     "hotbar",
     "job",
