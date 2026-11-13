@@ -67,6 +67,9 @@ public class Configuration : IPluginConfiguration
     /// <summary>The window has been given its starting width once.</summary>
     public bool StartSizeDone { get; set; }
 
+    /// <summary>Cards the player collapsed in the window (by card id), so they stay collapsed next time.</summary>
+    public System.Collections.Generic.HashSet<string> CollapsedCards { get; set; } = new();
+
     /// <summary>Folder for exported settings and hotbar backups, picked by the player. Empty until they pick one.</summary>
     public string SaveFolder { get; set; } = string.Empty;
 

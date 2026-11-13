@@ -220,7 +220,7 @@ public sealed class RulesWindow : Window
         using (plugin.TitleFont.Available ? plugin.TitleFont.Push() : null)
         {
             ImGui.SetWindowFontScale(0.72f);
-            ImGui.TextColored(Theme.Text, $"Hotbar {bar} rules");
+            ImGui.TextColored(Theme.AccentText, $"Hotbar {bar} rules");
             ImGui.SetWindowFontScale(1f);
         }
         var titleH = ImGui.GetItemRectSize().Y;

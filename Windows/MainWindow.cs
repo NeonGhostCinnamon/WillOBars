@@ -532,6 +532,7 @@ public sealed class MainWindow : Window
         var right = Theme.CardInnerRight;
         var rowStart = ImGui.GetCursorScreenPos();
         var dl = ImGui.GetWindowDrawList();
+        var textRight = right; // the description under the row uses the full width
 
         // Number in a circle (filled when Will-o-Bars controls this hotbar) and the title.
         var cd = ImGui.GetTextLineHeight() + S(4);
@@ -552,7 +553,18 @@ public sealed class MainWindow : Window
         dl.AddText(new Vector2(center.X - (nInk.X + nInk.Z) / 2f, cy - (nInk.Y + nInk.W) / 2f),
             ImGui.GetColorU32(controlled ? Theme.OnPink : Theme.Muted), num);
         var title = $"Hotbar {bar}";
-        dl.AddText(new Vector2(left + cd + S(8), cy - ImGui.GetTextLineHeight() / 2f), ImGui.GetColorU32(rule != null ? Theme.Text : Theme.TextSoft), title);
+        using (plugin.TitleFont.Available ? plugin.TitleFont.Push() : null)
+        {
+            ImGui.SetWindowFontScale(0.6f);
+            dl.AddText(new Vector2(left + cd + S(8), cy - ImGui.GetTextLineHeight() / 2f), ImGui.GetColorU32(Theme.AccentText), title);
+            ImGui.SetWindowFontScale(1f);
+        }
+
+        // Round button at the far right: collapses the card to just this row.
+        var closed = Config.CollapsedCards.Contains(Theme.CardId);
+        ImGui.SetCursorScreenPos(new Vector2(right - d, rowStart.Y));
+        closed = Theme.FoldButton(Config.CollapsedCards, plugin.SaveOnly, closed);
+        right -= d + S(6);
 
         // Right side: the state pill, and the Edit button left of it.
         var inGame = plugin.Look.IsShownInGame(bar);
@@ -588,9 +600,15 @@ public sealed class MainWindow : Window
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(rule == null ? $"Make a rule for hotbar {bar}." : $"Edit the rule for hotbar {bar}.");
 
-        // Second line: what the rule does, in words.
+        // Second line: what the rule does, in words (hidden while the card is collapsed).
+        if (closed)
+        {
+            ImGui.SetCursorScreenPos(new Vector2(left, rowStart.Y + d));
+            ImGui.Dummy(Vector2.Zero);
+            return;
+        }
         ImGui.SetCursorScreenPos(new Vector2(left + cd + S(8), rowStart.Y + d + S(2)));
-        using (ImRaii.TextWrapPos(ImGui.GetCursorPosX() + (right - left - cd - S(8))))
+        using (ImRaii.TextWrapPos(ImGui.GetCursorPosX() + (textRight - left - cd - S(8))))
         {
             if (rule == null)
             {
@@ -703,7 +721,8 @@ public sealed class MainWindow : Window
     {
         Theme.Card("transfer", () =>
         {
-            ImGui.TextColored(Theme.Text, "Import/Export");
+            if (!Theme.CardHeader(plugin.TitleFont, "Import/Export", Config.CollapsedCards, plugin.SaveOnly))
+                return;
             Theme.BrandText("Save your hotbar rules outside the plugin, so you can bring them back after resetting Will-o-Bars or share them with a friend.", Theme.Muted, Theme.CardInnerRight);
             ImGuiHelpers.ScaledDummy(2f);
 
@@ -913,7 +932,8 @@ public sealed class MainWindow : Window
 
         Theme.Card("savebackup", () =>
         {
-            ImGui.TextColored(Theme.Text, "Save your hotbars");
+            if (!Theme.CardHeader(plugin.TitleFont, "Save your hotbars", Config.CollapsedCards, plugin.SaveOnly))
+                return;
             Theme.Wrapped("Saves every action on every hotbar and cross hotbar, for all your classes and jobs, plus which hotbars are shared. Restore it any time to go back to exactly this setup.", Theme.Muted);
             ImGuiHelpers.ScaledDummy(2f);
 
@@ -940,7 +960,8 @@ public sealed class MainWindow : Window
 
         Theme.Card("history", () =>
         {
-            ImGui.TextColored(Theme.Text, "History");
+            if (!Theme.CardHeader(plugin.TitleFont, "History", Config.CollapsedCards, plugin.SaveOnly, $"{backups.List.Count} saved"))
+                return;
             Theme.Wrapped("Will-o-Bars also saves one automatically the first time you log in with it, and right before it changes whether a hotbar is shared. Restoring pauses all your rules, so nothing changes your hotbars again until you turn a rule back on. Pick a save folder in the Settings tab to keep backups outside the plugin, so resetting it doesn't delete them.", Theme.Muted);
             ImGuiHelpers.ScaledDummy(2f);
 
