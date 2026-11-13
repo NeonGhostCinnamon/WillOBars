@@ -1303,8 +1303,8 @@ public sealed class MainWindow : Window
         ImGuiHelpers.ScaledDummy(2f);
         var spacing = ImGui.GetStyle().ItemSpacing.X;
         var avail = ImGui.GetContentRegionAvail().X;
-        var linkW = S(96);
-        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + Math.Max(0, (avail - (linkW * 2 + spacing)) / 2f));
+        var linkW = Math.Min(S(96), (avail - spacing * 2) / 3f);
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + Math.Max(0, (avail - (linkW * 3 + spacing * 2)) / 2f));
 
         if (Theme.LinkButton("##kofi", FontAwesomeIcon.Coffee, "Ko-fi", rainbow: true, width: linkW))
             Util.OpenLink(Theme.KofiUrl);
@@ -1315,5 +1315,10 @@ public sealed class MainWindow : Window
             Util.OpenLink(GitHubUrl);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(GitHubUrl);
+        ImGui.SameLine();
+        if (Theme.DiscordButton("##discord", plugin.DiscordLogo, linkW))
+            Util.OpenLink(Theme.DiscordUrl);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Join the Will-o Discord");
     }
 }
